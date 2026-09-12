@@ -1,8 +1,14 @@
-﻿const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+﻿const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://coldguard-backend.onrender.com/api';
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('coldguard_token');
+}
+
+export function getAuthUser(): any | null {
+  if (typeof window === 'undefined') return null;
+  const user = localStorage.getItem('coldguard_user');
+  return user ? JSON.parse(user) : null;
 }
 
 export function setAuthSession(token: string, user: unknown) {
@@ -29,6 +35,7 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
     headers['Authorization'] = Bearer ;
   }
 
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : /;
   const response = await fetch(${API_BASE_URL}, {
     ...options,
     headers,
