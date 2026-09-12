@@ -32,10 +32,13 @@ export default function LeafletMap({
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
-  const layersRef = useRef<any>(null);
+  const layerGroupRef = useRef<any>(null);
+  const truckMarkerRef = useRef<any>(null);
+  const polylineRef = useRef<any>(null);
   const clickHandlerRef = useRef<any>(null);
   const hasFitBoundsRef = useRef<boolean>(false);
   const lastRouteSigRef = useRef<string>('');
+  const lastStaticSigRef = useRef<string>('');
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return;
@@ -66,11 +69,11 @@ export default function LeafletMap({
           maxZoom: 18,
         }).addTo(mapRef.current);
 
-        layersRef.current = L.layerGroup().addTo(mapRef.current);
+        layerGroupRef.current = L.layerGroup().addTo(mapRef.current);
       }
 
       const map = mapRef.current;
-      const layerGroup = layersRef.current;
+      const layerGroup = layerGroupRef.current;
       if (!layerGroup) return;
 
       // Handle map click events
@@ -85,27 +88,45 @@ export default function LeafletMap({
         map.on('click', clickHandlerRef.current);
       }
 
-      // Check if route changed to re-fit bounds
+      // Compute route signature & static markers signature
       const routeSig = routeCoordinates && routeCoordinates.length > 0
-        ? `${routeCoordinates[0][0]}_${routeCoordinates.length}`
+        ? `${routeCoordinates[0][0]}_${routeCoordinates[0][1]}_${routeCoordinates.length}`
         : '';
-      if (routeSig !== lastRouteSigRef.current) {
-        lastRouteSigRef.current = routeSig;
-        hasFitBoundsRef.current = false;
+      const staticMarkers = markers.filter((m) => m.type !== 'truck');
+      const staticSig = staticMarkers.map((m) => `${m.type}_${m.lat.toFixed(4)}_${m.lng.toFixed(4)}`).join('|');
+
+      const truckItem = markers.find((m) => m.type === 'truck');
+
+      // Fast-path: Only truck moved, route & other markers are unchanged
+      if (
+        routeSig === lastRouteSigRef.current &&
+        staticSig === lastStaticSigRef.current &&
+        truckMarkerRef.current &&
+        truckItem
+      ) {
+        const newLatLng = L.latLng(truckItem.lat, truckItem.lng);
+        truckMarkerRef.current.setLatLng(newLatLng);
+        return;
       }
 
-      // Clear previous markers & polylines
+      // Full update required: route or static markers changed
+      lastRouteSigRef.current = routeSig;
+      lastStaticSigRef.current = staticSig;
+      hasFitBoundsRef.current = false;
+
+      // Clear previous layers
       layerGroup.clearLayers();
+      truckMarkerRef.current = null;
+      polylineRef.current = null;
 
       const bounds = L.latLngBounds([]);
 
-      // Add markers
+      // Add all markers
       markers.forEach((m) => {
         if (!m.lat || !m.lng || isNaN(m.lat) || isNaN(m.lng)) return;
         const latLng = L.latLng(m.lat, m.lng);
         bounds.extend(latLng);
 
-        let marker: any;
         if (m.type === 'truck') {
           const truckDivIcon = L.divIcon({
             className: 'cg-live-truck-marker',
@@ -123,7 +144,15 @@ export default function LeafletMap({
             iconAnchor: [20, 26],
             popupAnchor: [0, -26],
           });
-          marker = L.marker(latLng, { icon: truckDivIcon, zIndexOffset: 1000 });
+          const marker = L.marker(latLng, { icon: truckDivIcon, zIndexOffset: 1000 });
+          marker.bindPopup(`
+            <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4;">
+              <b style="color: #0f172a;">${m.title}</b>
+              ${m.description ? `<p style="margin: 4px 0 0 0; color: #475569;">${m.description}</p>` : ''}
+            </div>
+          `);
+          layerGroup.addLayer(marker);
+          truckMarkerRef.current = marker;
         } else {
           let iconUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png';
           if (m.type === 'facility') {
@@ -141,15 +170,15 @@ export default function LeafletMap({
             iconAnchor: [12, 41],
             popupAnchor: [1, -34],
           });
-          marker = L.marker(latLng, { icon: customIcon });
+          const marker = L.marker(latLng, { icon: customIcon });
+          marker.bindPopup(`
+            <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4;">
+              <b style="color: #0f172a;">${m.title}</b>
+              ${m.description ? `<p style="margin: 4px 0 0 0; color: #475569;">${m.description}</p>` : ''}
+            </div>
+          `);
+          layerGroup.addLayer(marker);
         }
-        marker.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4;">
-            <b style="color: #0f172a;">${m.title}</b>
-            ${m.description ? `<p style="margin: 4px 0 0 0; color: #475569;">${m.description}</p>` : ''}
-          </div>
-        `);
-        layerGroup.addLayer(marker);
       });
 
       // Add OSRM Road Polyline
@@ -161,6 +190,7 @@ export default function LeafletMap({
           lineJoin: 'round',
         });
         layerGroup.addLayer(polyline);
+        polylineRef.current = polyline;
 
         // Only fit bounds on initial load or route change to avoid disrupting user zoom during live tracking
         if (!hasFitBoundsRef.current) {

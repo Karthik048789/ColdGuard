@@ -230,6 +230,14 @@ export default function MapLibreNavMap({
   const drawOrUpdateRoute = useCallback((map: maplibregl.Map, coords: [number, number][], emergency: boolean) => {
     if (!map || !coords || coords.length < 2) return;
 
+    // Guaranteed style loading check to prevent dropped route line
+    if (!map.isStyleLoaded()) {
+      const onStyleReady = () => drawOrUpdateRoute(map, coords, emergency);
+      map.once('load', onStyleReady);
+      map.once('style.load', onStyleReady);
+      return;
+    }
+
     const geojson = makeGeoJson(coords);
     const source = map.getSource('route-source') as maplibregl.GeoJSONSource | undefined;
 
@@ -360,6 +368,12 @@ export default function MapLibreNavMap({
       setTimeout(() => {
         try { map.resize(); } catch {}
       }, 300);
+    });
+
+    map.on('style.load', () => {
+      if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
+        drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
+      }
     });
 
 

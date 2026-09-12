@@ -157,8 +157,8 @@ export default function DriverPage() {
     setActionMsg('');
   };
 
-  // Route & Steps Fetcher
-  const fetchRouteData = useCallback(async (tk: string, sid: number, facilityId?: number, direct?: boolean) => {
+  // Route & Steps Fetcher with guaranteed direct OSRM fallback
+  const fetchRouteData = useCallback(async (tk: string, sid: number, facilityId?: number, direct?: boolean, fallbackShip?: any) => {
     try {
       let url = `${API}/shipments/${sid}/route`;
       if (facilityId) {
@@ -179,11 +179,39 @@ export default function DriverPage() {
             setCurrentStreet(d.data.steps[0].instruction);
           }
         }
+        return;
+      }
+
+      // Direct OSRM engine fallback if backend route had no geometry or failed
+      const s = fallbackShip || shipment;
+      const startLng = Number(s?.current_lng || s?.origin_lng);
+      const startLat = Number(s?.current_lat || s?.origin_lat);
+      const endLng = Number(s?.destination_lng);
+      const endLat = Number(s?.destination_lat);
+
+      if (startLng && startLat && endLng && endLat) {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
+        const osrmRes = await fetch(osrmUrl).then((res) => res.json()).catch(() => null);
+
+        if (osrmRes?.routes?.[0]?.geometry?.coordinates) {
+          setRouteCoordinates(osrmRes.routes[0].geometry.coordinates);
+          const steps = osrmRes.routes[0].legs?.[0]?.steps || [];
+          if (steps.length > 0) {
+            const mappedSteps = steps.map((st: any) => ({
+              instruction: st.maneuver?.instruction || st.name || 'Proceed along route',
+              distance_m: st.distance,
+              duration_seconds: st.duration,
+            }));
+            setRouteSteps(mappedSteps);
+            setNextStep(mappedSteps[0]);
+            if (mappedSteps[0]?.instruction) setCurrentStreet(mappedSteps[0].instruction);
+          }
+        }
       }
     } catch (e) {
       console.error('Failed to fetch OSRM route:', e);
     }
-  }, []);
+  }, [shipment]);
 
   // Fetch active shipment assigned to this driver
   useEffect(() => {
@@ -252,7 +280,7 @@ export default function DriverPage() {
           if (aData.success) setAlerts(aData.data || []);
 
           // Fetch OSRM road route immediately
-          await fetchRouteData(token, assigned.id);
+          await fetchRouteData(token, assigned.id, undefined, undefined, assigned);
         }
       } catch (e) {
         console.error('Error loading shipment:', e);

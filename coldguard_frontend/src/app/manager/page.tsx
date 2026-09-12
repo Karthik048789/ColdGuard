@@ -222,6 +222,9 @@ export default function ManagerDashboard() {
   const [aiLoading, setAiLoading] = useState(false);
 
   const [geocoding, setGeocoding] = useState(false);
+  const [geoSearchQuery, setGeoSearchQuery] = useState('');
+  const [geoSearching, setGeoSearching] = useState(false);
+  const [geoResults, setGeoResults] = useState<any[]>([]);
   const [modalRouteCoords, setModalRouteCoords] = useState<Array<[number, number]>>([]);
   const [modalRouteMeta, setModalRouteMeta] = useState<{ distanceKm?: string; durationMin?: number } | null>(null);
 
@@ -348,6 +351,52 @@ export default function ManagerDashboard() {
     }
   };
 
+  // Forward geocoding & PIN code search
+  const handleForwardGeocode = async (q: string) => {
+    setGeoSearchQuery(q);
+    if (!q.trim() || q.trim().length < 2) {
+      setGeoResults([]);
+      return;
+    }
+    setGeoSearching(true);
+    try {
+      const isPin = /^\d{6}$/.test(q.trim());
+      const url = isPin
+        ? `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim())}&country=in&format=json`
+        : `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q.trim() + ', Goa, India')}&format=json&limit=5`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'ColdGuard/1.0' } }).then((r) => r.json());
+      if (Array.isArray(res)) {
+        setGeoResults(res);
+      } else {
+        setGeoResults([]);
+      }
+    } catch {
+      setGeoResults([]);
+    } finally {
+      setGeoSearching(false);
+    }
+  };
+
+  const handleSelectGeoLocation = (item: any) => {
+    const lat = parseFloat(item.lat);
+    const lng = parseFloat(item.lon);
+    const name = item.display_name.split(',').slice(0, 3).join(', ').trim();
+    const roundedLat = parseFloat(lat.toFixed(4));
+    const roundedLng = parseFloat(lng.toFixed(4));
+    setNewShipment((prev) => {
+      const updated = {
+        ...prev,
+        destination_lat: roundedLat,
+        destination_lng: roundedLng,
+        destination_name: name,
+      };
+      updateModalRoutePreview(updated.origin_lat, updated.origin_lng, roundedLat, roundedLng);
+      return updated;
+    });
+    setGeoResults([]);
+    setGeoSearchQuery(name);
+  };
+
   // Reverse geocoding via OpenStreetMap Nominatim
   const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
     try {
@@ -443,9 +492,11 @@ export default function ManagerDashboard() {
     setAiAnalysis(null);
   };
 
-  // Load shipments and facilities from backend
-  const loadDashboardData = useCallback(async (preferredSelectId?: number) => {
-    setLoading(true);
+  // Load shipments and facilities from backend (with silent background polling)
+  const loadDashboardData = useCallback(async (preferredSelectId?: number, isSilent = false) => {
+    if (!isSilent && shipments.length === 0) {
+      setLoading(true);
+    }
     try {
       const [shipmentsRes, facilitiesRes] = await Promise.all([
         apiFetch<any>('/shipments').catch(() => null),
@@ -471,26 +522,32 @@ export default function ManagerDashboard() {
           toSelect = extractedShipments.find((s) => s.id === selectedShipment.id);
         }
         if (!toSelect) {
-          toSelect = extractedShipments[0];
+          // Prioritize active in-transit shipments so manager sees live moving truck
+          toSelect = extractedShipments.find((s) => ['IN_TRANSIT', 'WARNING', 'CRITICAL', 'REROUTED', 'DIVERTED'].includes(s.status)) || extractedShipments[0];
         }
 
         if (toSelect) {
           setSelectedShipment(toSelect);
-          fetchOsrmRoute(toSelect);
+          // Only re-fetch route if selecting a new shipment or if route coordinates are missing
+          if (selectedShipment?.id !== toSelect.id || routeCoordinates.length === 0) {
+            fetchOsrmRoute(toSelect);
+          }
         }
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     } finally {
-      setLoading(false);
+      if (!isSilent) {
+        setLoading(false);
+      }
     }
-  }, [fetchOsrmRoute, selectedShipment]);
+  }, [fetchOsrmRoute, selectedShipment?.id, routeCoordinates.length, shipments.length]);
 
-  // Initial mount
+  // Initial mount with silent 15-second background polling
   useEffect(() => {
     loadDashboardData();
     const interval = setInterval(() => {
-      loadDashboardData();
+      loadDashboardData(undefined, true);
     }, 15000);
     return () => clearInterval(interval);
   }, []);
@@ -1614,12 +1671,59 @@ export default function ManagerDashboard() {
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-xs font-bold text-slate-900">Pin Delivery Destination</span>
-                      <p className="text-[10px] text-slate-400">Click anywhere on the map to drop the delivery pin</p>
+                      <p className="text-[10px] text-slate-400">Search location / PIN code or click map to drop pin</p>
                     </div>
                     <span className="px-3 py-1 rounded-xl text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                       <MapPin className="w-3 h-3" />
                       <span>Click Map to Set</span>
                     </span>
+                  </div>
+
+                  {/* Location & PIN Code Forward Search Input */}
+                  <div className="relative">
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus-within:border-blue-500 focus-within:bg-white transition-all shadow-inner">
+                      <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Search town, hospital, or 6-digit PIN code (e.g. 403001, Panaji, Margao)..."
+                        value={geoSearchQuery}
+                        onChange={(e) => handleForwardGeocode(e.target.value)}
+                        className="bg-transparent border-none outline-none w-full text-slate-800 placeholder:text-slate-400 font-medium text-xs"
+                      />
+                      {geoSearching && <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />}
+                      {geoSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => { setGeoSearchQuery(''); setGeoResults([]); }}
+                          className="text-slate-400 hover:text-slate-600 font-bold text-xs"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Geocoding Dropdown Suggestions */}
+                    {geoResults.length > 0 && (
+                      <div className="absolute z-[500] left-0 right-0 top-full mt-1.5 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200 overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                        {geoResults.map((r, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => handleSelectGeoLocation(r)}
+                            className="w-full text-left px-3.5 py-2.5 hover:bg-blue-50/80 transition-colors flex items-center justify-between gap-2 group"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <MapPin className="w-3.5 h-3.5 text-blue-500 shrink-0 group-hover:scale-110 transition-transform" />
+                              <span className="text-xs font-bold text-slate-800 truncate">{r.display_name.split(',')[0]}</span>
+                              <span className="text-[10px] text-slate-400 truncate max-w-[180px]">{r.display_name}</span>
+                            </div>
+                            <span className="text-[9px] font-mono font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded shrink-0">
+                              Select Pin
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Interactive Picker Map */}
