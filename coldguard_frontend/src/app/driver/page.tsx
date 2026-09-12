@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 
 const MapLibreNavMap = dynamic(() => import('@/components/maps/MapLibreNavMap'), { ssr: false });
@@ -157,7 +157,10 @@ export default function DriverPage() {
     setActionMsg('');
   };
 
-  // Route & Steps Fetcher with guaranteed direct OSRM fallback
+  const shipmentDataRef = useRef<any>(shipment);
+  shipmentDataRef.current = shipment;
+
+  // Route & Steps Fetcher with guaranteed direct OSRM fallback (100% stable reference to stop loop)
   const fetchRouteData = useCallback(async (tk: string, sid: number, facilityId?: number, direct?: boolean, fallbackShip?: any) => {
     try {
       let url = `${API}/shipments/${sid}/route`;
@@ -183,7 +186,7 @@ export default function DriverPage() {
       }
 
       // Direct OSRM engine fallback if backend route had no geometry or failed
-      const s = fallbackShip || shipment;
+      const s = fallbackShip || shipmentDataRef.current;
       const startLng = Number(s?.current_lng || s?.origin_lng);
       const startLat = Number(s?.current_lat || s?.origin_lat);
       const endLng = Number(s?.destination_lng);
@@ -211,7 +214,7 @@ export default function DriverPage() {
     } catch (e) {
       console.error('Failed to fetch OSRM route:', e);
     }
-  }, [shipment]);
+  }, []);
 
   // Fetch active shipment assigned to this driver
   useEffect(() => {

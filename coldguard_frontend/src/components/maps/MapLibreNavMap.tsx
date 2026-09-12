@@ -292,6 +292,10 @@ export default function MapLibreNavMap({
         if (map.getLayer('route-line')) {
           map.setPaintProperty('route-line', 'line-color', emergency ? '#ef4444' : '#1a73e8');
         }
+        const core = puckElRef.current?.querySelector('#cg-chevron-core');
+        if (core) {
+          core.setAttribute('fill', emergency ? '#ef4444' : '#1a73e8');
+        }
         if (map.getLayer('route-casing')) {
           map.setPaintProperty('route-casing', 'line-color', emergency ? '#7f1d1d' : '#174ea6');
         }
@@ -385,53 +389,42 @@ export default function MapLibreNavMap({
       }, 300);
     });
 
-    // Create Navigation Puck (Vehicle marker)
+    // Create 3D Navigation Chevron attached flat to the road plane
     const puckEl = document.createElement('div');
+    puckEl.className = 'cg-3d-puck-container';
     puckEl.style.display = 'flex';
     puckEl.style.flexDirection = 'column';
     puckEl.style.alignItems = 'center';
+    puckEl.style.justifyContent = 'center';
     puckEl.style.pointerEvents = 'none';
     puckEl.style.zIndex = '50';
 
-    const circle = document.createElement('div');
-    circle.style.width = '44px';
-    circle.style.height = '44px';
-    circle.style.borderRadius = '50%';
-    circle.style.background = '#ffffff';
-    circle.style.boxShadow = '0 4px 20px rgba(0,0,0,0.45), 0 0 0 3.5px rgba(26,115,232,0.7)';
-    circle.style.display = 'flex';
-    circle.style.alignItems = 'center';
-    circle.style.justifyContent = 'center';
-
-    circle.innerHTML = `
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" class="cg-puck-svg" style="transition: transform 0.15s ease-out;">
-        <path d="M12 2L4 20L12 16L20 20L12 2Z" fill="#1a73e8" stroke="#174ea6" stroke-width="1.8" stroke-linejoin="round"/>
-      </svg>
+    puckEl.innerHTML = `
+      <div style="position: relative; width: 54px; height: 54px; display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.6));">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" class="cg-puck-svg" style="display: block; transform-origin: 24px 24px;">
+          <!-- 3D Road Shadow / Glow Aura -->
+          <path d="M24 3 L44 43 L24 33 L4 43 Z" fill="rgba(26,115,232,0.4)" />
+          <!-- White outer casing -->
+          <path d="M24 5 L41 40 L24 31 L7 40 Z" fill="#ffffff" stroke="#174ea6" stroke-width="2.6" stroke-linejoin="round" />
+          <!-- Vibrant Core Chevron (Electric Blue #1a73e8) -->
+          <path id="cg-chevron-core" d="M24 8 L38 38 L24 30 L10 38 Z" fill="#1a73e8" />
+          <!-- Dynamic Centerline Glint -->
+          <line x1="24" y1="11" x2="24" y2="29" stroke="#93c5fd" stroke-width="2" stroke-linecap="round" />
+        </svg>
+      </div>
     `;
 
-    const pill = document.createElement('span');
-    pill.style.marginTop = '5px';
-    pill.style.padding = '2px 9px';
-    pill.style.borderRadius = '12px';
-    pill.style.background = 'rgba(255,255,255,0.96)';
-    pill.style.color = '#1e3a8a';
-    pill.style.fontSize = '10px';
-    pill.style.fontWeight = '900';
-    pill.style.letterSpacing = '0.3px';
-    pill.style.boxShadow = '0 2px 10px rgba(0,0,0,0.3)';
-    pill.style.whiteSpace = 'nowrap';
-    pill.style.border = '1.5px solid #93c5fd';
-    pill.innerText = currentStreet;
-
-    puckEl.appendChild(circle);
-    puckEl.appendChild(pill);
-
     puckElRef.current = puckEl;
-    streetPillRef.current = pill;
-    arrowSvgRef.current = circle.querySelector('svg');
+    arrowSvgRef.current = puckEl.querySelector('svg');
 
-    const marker = new maplibregl.Marker({ element: puckEl, rotationAlignment: 'viewport' })
+    // Attach marker directly to the 3D map plane (pitchAlignment: 'map', rotationAlignment: 'map')
+    const marker = new maplibregl.Marker({
+      element: puckEl,
+      pitchAlignment: 'map',
+      rotationAlignment: 'map',
+    })
       .setLngLat(initialCoord)
+      .setRotation(0)
       .addTo(map);
 
     puckMarkerRef.current = marker;
@@ -546,16 +539,14 @@ export default function MapLibreNavMap({
     }
   }, [destinationCoord, destinationName, routeCoordinates]);
 
-  // 3. ALL FACILITIES ACROSS GOA (❄️)
+  // 3. ALL FACILITIES ACROSS GOA (❄️) - Static persistence to eliminate flashing
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Clear previous facility markers
-    facMarkersRef.current.forEach((m) => m.remove());
-    facMarkersRef.current = [];
-
     if (!facilities || facilities.length === 0) return;
+    // Keep markers if already placed on map
+    if (facMarkersRef.current.length > 0) return;
 
     const newMarkers: maplibregl.Marker[] = [];
 
@@ -718,6 +709,7 @@ export default function MapLibreNavMap({
 
         if (puckMarkerRef.current) {
           puckMarkerRef.current.setLngLat([lng, lat]);
+          puckMarkerRef.current.setRotation(currentBearingRef.current);
         }
 
         if (cameraModeRef.current === 'drive') {
@@ -725,25 +717,19 @@ export default function MapLibreNavMap({
             center: [lng, lat],
             bearing: currentBearingRef.current,
           });
-          if (arrowSvgRef.current) {
-            arrowSvgRef.current.style.transform = 'rotate(0deg)';
-          }
-        } else {
-          if (arrowSvgRef.current) {
-            arrowSvgRef.current.style.transform = `rotate(${currentBearingRef.current}deg)`;
-          }
         }
 
-        // Throttled update to React HUD (every 1 second)
+        // Throttled update to React HUD (every 1 second, bailed out if unchanged)
         if (now - lastThrottledUpdate > 1000) {
           lastThrottledUpdate = now;
-          setCurrentSpeed(Math.round(speed));
+          const roundedSpeed = Math.round(speed);
+          setCurrentSpeed((prev) => (prev !== roundedSpeed ? roundedSpeed : prev));
 
           const remainingPoints = coords.length - idx;
           const remKm = Math.max(0.5, (remainingPoints * 0.055)).toFixed(1);
           const remMin = Math.max(1, Math.round((Number(remKm) / 55) * 60));
-          setRemainingKm(remKm);
-          setEtaMinutes(remMin);
+          setRemainingKm((prev) => (prev !== remKm ? remKm : prev));
+          setEtaMinutes((prev) => (prev !== remMin ? remMin : prev));
 
           const steps = routeStepsRef.current;
           if (steps && steps.length > 0) {
@@ -760,19 +746,16 @@ export default function MapLibreNavMap({
                   : `${Math.round(curStep.distance_m)} m`
                 : '500 m';
 
-              setActiveStepText(instr);
-              setActiveStepDist(dist);
-              setActiveTurnIcon(getTurnIcon(instr));
-
-              if (streetPillRef.current) {
-                const words = instr.split(' ');
-                streetPillRef.current.innerText = words.slice(0, 3).join(' ');
-              }
+              setActiveStepText((prev) => (prev !== instr ? instr : prev));
+              setActiveStepDist((prev) => (prev !== dist ? dist : prev));
+              const icon = getTurnIcon(instr);
+              setActiveTurnIcon((prev) => (prev !== icon ? icon : prev));
             }
           } else {
-            setActiveStepText(isEmerg ? `Diverting to ${facilityName}` : `Heading to ${destinationName}`);
-            setActiveStepDist(`${remKm} km`);
-            setActiveTurnIcon('↑');
+            const fallbackText = isEmerg ? `Diverting to ${facilityName}` : `Heading to ${destinationName}`;
+            setActiveStepText((prev) => (prev !== fallbackText ? fallbackText : prev));
+            setActiveStepDist((prev) => (prev !== `${remKm} km` ? `${remKm} km` : prev));
+            setActiveTurnIcon((prev) => (prev !== '↑' ? '↑' : prev));
           }
 
           if (onLocationUpdateRef.current) {
@@ -797,18 +780,30 @@ export default function MapLibreNavMap({
     if (!map) return;
 
     if (cameraMode === 'drive') {
+      // Switch to 2D Overview
       setCameraMode('overview');
       cameraModeRef.current = 'overview';
+      if (puckMarkerRef.current) {
+        puckMarkerRef.current.setPitchAlignment('map');
+        puckMarkerRef.current.setRotationAlignment('map');
+        puckMarkerRef.current.setRotation(currentBearingRef.current || 0);
+      }
       fitOverviewBounds();
     } else {
+      // Switch to 3D Drive Mode (Arrow attached to road surface)
       setCameraMode('drive');
       cameraModeRef.current = 'drive';
+      if (puckMarkerRef.current) {
+        puckMarkerRef.current.setPitchAlignment('map');
+        puckMarkerRef.current.setRotationAlignment('map');
+        puckMarkerRef.current.setRotation(currentBearingRef.current || 0);
+      }
       const coords = routeCoordsRef.current;
       const idx = Math.floor(routeIndexRef.current);
       const curPt = coords && coords[idx] ? coords[idx] : originCoord || [73.856, 15.4647];
       map.easeTo({
         center: curPt,
-        zoom: 16.2,
+        zoom: 16.5,
         pitch: 56,
         bearing: currentBearingRef.current || 0,
         duration: 800,
