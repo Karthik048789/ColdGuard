@@ -500,6 +500,28 @@ export default function DriverPage() {
   const isMoving = driverStatus === 'moving';
   const unread = alerts.filter((a: any) => !a.read_at).length;
 
+  const currentShipStatus = shipment?.status || 'IN_TRANSIT';
+  const displayStatus = isEmergency
+    ? 'BREACH'
+    : isAtFacility
+    ? 'SECURED'
+    : currentShipStatus === 'CRITICAL'
+    ? 'CRITICAL'
+    : currentShipStatus === 'WARNING'
+    ? 'WARNING'
+    : isMoving
+    ? 'IN_TRANSIT'
+    : currentShipStatus;
+
+  const statusColor =
+    displayStatus === 'CRITICAL' || displayStatus === 'BREACH'
+      ? '#dc2626'
+      : displayStatus === 'WARNING'
+      ? '#f59e0b'
+      : displayStatus === 'SECURED' || displayStatus === 'IN_TRANSIT' || displayStatus === 'SAFE'
+      ? '#10b981'
+      : '#3b82f6';
+
   // -------------------------------------------------------------
   // 1. NOT LOGGED IN: Render Mobile Driver Login View
   // -------------------------------------------------------------
@@ -713,8 +735,8 @@ export default function DriverPage() {
           <span style={{ ...s.tempValText, color: tempColor, animation: tempPulse ? 'cgPulse 0.5s ease' : 'none' }}>
             {temp !== undefined && temp !== null ? `${Number(temp).toFixed(1)}°C` : '--.-°C'}
           </span>
-          <span style={s.tempStatusBadge(tempColor)}>
-            {isEmergency ? 'BREACH' : isAtFacility ? 'SECURED' : isMoving ? 'SAFE' : 'STANDBY'}
+          <span style={s.tempStatusBadge(statusColor)}>
+            {displayStatus}
           </span>
         </div>
 

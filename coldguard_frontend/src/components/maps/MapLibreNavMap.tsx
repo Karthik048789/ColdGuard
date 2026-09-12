@@ -62,16 +62,7 @@ function createCartoStyle(): maplibregl.StyleSpecification {
         type: 'geojson',
         data: {
           type: 'FeatureCollection',
-          features: [
-            {
-              type: 'Feature',
-              properties: {},
-              geometry: {
-                type: 'LineString',
-                coordinates: [],
-              },
-            },
-          ],
+          features: [],
         },
       },
     },
@@ -136,6 +127,12 @@ function calculateBearing(lng1: number, lat1: number, lng2: number, lat2: number
   return (Math.atan2(y, x) * toDeg + 360) % 360;
 }
 
+// Calculate shortest angle difference between two bearings (-180 to 180)
+function angleDiff(target: number, current: number): number {
+  let diff = (target - current + 180) % 360 - 180;
+  return diff < -180 ? diff + 360 : diff;
+}
+
 function getTurnIcon(instruction: string = ''): string {
   const lower = instruction.toLowerCase();
   if (lower.includes('slight right')) return '↗';
@@ -189,6 +186,7 @@ export default function MapLibreNavMap({
   // Animation & simulation refs
   const animIdRef = useRef<number | null>(null);
   const routeIndexRef = useRef<number>(0);
+  const currentBearingRef = useRef<number>(0);
   const routeCoordsRef = useRef<[number, number][]>(routeCoordinates);
   routeCoordsRef.current = routeCoordinates;
   const routeStepsRef = useRef<RouteStep[]>(routeSteps);
@@ -238,41 +236,49 @@ export default function MapLibreNavMap({
     if (source) {
       try {
         source.setData(geojson);
-      } catch {}
-    } else if (map.isStyleLoaded()) {
+      } catch (e) {
+        console.warn('MapLibre source.setData warning:', e);
+      }
+    } else {
       try {
-        if (!map.getSource('route-source')) {
-          map.addSource('route-source', {
-            type: 'geojson',
-            data: geojson,
-          });
-        }
-        if (!map.getLayer('route-casing')) {
-          map.addLayer({
-            id: 'route-casing',
-            type: 'line',
-            source: 'route-source',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: {
-              'line-color': emergency ? '#7f1d1d' : '#174ea6',
-              'line-width': 12,
-              'line-opacity': 0.95,
-            },
-          });
-        }
-        if (!map.getLayer('route-line')) {
-          map.addLayer({
-            id: 'route-line',
-            type: 'line',
-            source: 'route-source',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: {
-              'line-color': emergency ? '#dc2626' : '#1a73e8',
-              'line-width': 7.5,
-              'line-opacity': 1,
-            },
-          });
-        }
+        map.addSource('route-source', {
+          type: 'geojson',
+          data: geojson,
+        });
+      } catch {}
+    }
+
+    // Ensure route line casing layer exists
+    if (!map.getLayer('route-casing')) {
+      try {
+        map.addLayer({
+          id: 'route-casing',
+          type: 'line',
+          source: 'route-source',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': emergency ? '#7f1d1d' : '#174ea6',
+            'line-width': 12,
+            'line-opacity': 0.95,
+          },
+        });
+      } catch {}
+    }
+
+    // Ensure route core line layer exists
+    if (!map.getLayer('route-line')) {
+      try {
+        map.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route-source',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': emergency ? '#dc2626' : '#1a73e8',
+            'line-width': 7.5,
+            'line-opacity': 1,
+          },
+        });
       } catch {}
     }
 
@@ -356,11 +362,7 @@ export default function MapLibreNavMap({
       }, 300);
     });
 
-    map.on('styledata', () => {
-      if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
-        drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
-      }
-    });
+
 
     // Create Navigation Puck (Vehicle marker)
     const puckEl = document.createElement('div');
@@ -406,7 +408,7 @@ export default function MapLibreNavMap({
     streetPillRef.current = pill;
     arrowSvgRef.current = circle.querySelector('svg');
 
-    const marker = new maplibregl.Marker({ element: puckEl, rotationAlignment: 'map' })
+    const marker = new maplibregl.Marker({ element: puckEl, rotationAlignment: 'viewport' })
       .setLngLat(initialCoord)
       .addTo(map);
 
@@ -675,22 +677,32 @@ export default function MapLibreNavMap({
         const lat = p1[1] + (p2[1] - p1[1]) * frac;
 
         // Calculate tangent road bearing
-        const bearing = calculateBearing(p1[0], p1[1], p2[0], p2[1]);
+        const targetBearing = calculateBearing(p1[0], p1[1], p2[0], p2[1]);
+
+        // Smooth exponential damping on camera bearing (fluid turns around curves)
+        const diff = angleDiff(targetBearing, currentBearingRef.current);
+        const smoothFactor = Math.min(1, dt * 4.5);
+        currentBearingRef.current = (currentBearingRef.current + diff * smoothFactor + 360) % 360;
 
         if (puckMarkerRef.current) {
           puckMarkerRef.current.setLngLat([lng, lat]);
-        }
-
-        if (arrowSvgRef.current) {
-          arrowSvgRef.current.style.transform = `rotate(${bearing}deg)`;
         }
 
         // Camera follow in 3D perspective mode
         if (cameraModeRef.current === 'drive') {
           map.jumpTo({
             center: [lng, lat],
-            bearing: bearing,
+            bearing: currentBearingRef.current,
           });
+          // In 3D drive mode, camera is aligned with heading, so car arrow points UP
+          if (arrowSvgRef.current) {
+            arrowSvgRef.current.style.transform = 'rotate(0deg)';
+          }
+        } else {
+          // In overview mode (North up), arrow points along bearing
+          if (arrowSvgRef.current) {
+            arrowSvgRef.current.style.transform = `rotate(${currentBearingRef.current}deg)`;
+          }
         }
 
         // Throttled update to React HUD (every 1 second)
