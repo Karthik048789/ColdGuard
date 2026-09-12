@@ -21,16 +21,12 @@ Route::prefix('auth')->group(function () {
 });
 
 // Facility Module Routes
-Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/facilities', [\Modules\Facility\App\Http\Controllers\FacilityController::class, 'index']);
-    Route::get('/shipments/{id}/facilities/eligible', [\Modules\Facility\App\Http\Controllers\FacilityController::class, 'eligible']);
-});
+Route::get('/facilities', [\Modules\Facility\App\Http\Controllers\FacilityController::class, 'index']);
+Route::get('/shipments/{id}/facilities/eligible', [\Modules\Facility\App\Http\Controllers\FacilityController::class, 'eligible']);
 
 // Routing & Continuous Live Tracking Module Routes
-Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/shipments/{id}/location', [\Modules\Routing\App\Http\Controllers\RoutingController::class, 'location']);
-    Route::get('/shipments/{id}/route', [\Modules\Routing\App\Http\Controllers\RoutingController::class, 'route']);
-});
+Route::get('/shipments/{id}/location', [\Modules\Routing\App\Http\Controllers\RoutingController::class, 'location']);
+Route::get('/shipments/{id}/route', [\Modules\Routing\App\Http\Controllers\RoutingController::class, 'route']);
 
 // Intervention & Alerts Module Routes
 Route::middleware('auth:sanctum')->group(function () {

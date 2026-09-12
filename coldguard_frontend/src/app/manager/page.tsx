@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import { Shipment, Facility } from '@/lib/types';
@@ -244,12 +244,14 @@ export default function ManagerDashboard() {
     destination_lng: 73.9862,
     min_temp: 2.0,
     max_temp: 8.0,
-    driver_name: 'Rajesh Kumar',
-    driver_phone: '+91 98765 43211',
+    driver_name: '',
+    driver_phone: '',
   });
 
   // Success alert state
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
+
+
 
   // Extract shipments safely from any backend response structure
   const extractShipments = (res: any): Shipment[] => {
@@ -305,12 +307,8 @@ export default function ManagerDashboard() {
         }
       }
 
-      setRouteCoordinates([]);
-      setRouteMeta(null);
     } catch (err) {
       console.error('OSRM route fetch failed:', err);
-      setRouteCoordinates([]);
-      setRouteMeta(null);
     } finally {
       setRouteLoading(false);
     }
@@ -441,6 +439,17 @@ export default function ManagerDashboard() {
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingRef.current) return;
+
+    if (!newShipment.driver_name) {
+      alert('Please select an available driver before dispatching.');
+      return;
+    }
+    const busyMission = busyDriversMap.get(newShipment.driver_name.toLowerCase().trim());
+    if (busyMission) {
+      alert(`Driver "${newShipment.driver_name}" is currently assigned to active shipment ${busyMission.tracking_number || '#' + busyMission.id} (Status: ${busyMission.status}). A driver can only be assigned to a new shipment after delivering their active one.`);
+      return;
+    }
+
     isSubmittingRef.current = true;
     setIsSubmitting(true);
 
@@ -617,12 +626,26 @@ export default function ManagerDashboard() {
 
   const busyDriversMap = new Map<string, Shipment>();
   safeShipments.forEach((s) => {
-    if ((s.status === 'IN_TRANSIT' || s.status === 'WARNING' || s.status === 'CRITICAL' || s.status === 'REROUTED') && s.driver_name) {
+    if (s.status !== 'DELIVERED' && s.status !== 'CANCELLED' && s.status !== 'COMPROMISED' && s.driver_name) {
       busyDriversMap.set(s.driver_name.toLowerCase().trim(), s);
     }
   });
 
   const availableDrivers = FLEET_DRIVERS.filter((d) => !busyDriversMap.has(d.name.toLowerCase().trim()));
+
+  // Auto-select first available driver if none is currently selected or if selected driver is busy
+  useEffect(() => {
+    if (showCreateModal && availableDrivers.length > 0) {
+      const isCurrentBusy = newShipment.driver_name && busyDriversMap.has(newShipment.driver_name.toLowerCase().trim());
+      if (!newShipment.driver_name || isCurrentBusy) {
+        setNewShipment((prev) => ({
+          ...prev,
+          driver_name: availableDrivers[0].name,
+          driver_phone: availableDrivers[0].phone,
+        }));
+      }
+    }
+  }, [showCreateModal, availableDrivers.length]);
 
   // Dynamic statistics calculated directly from live shipments list
   const activeCount = safeShipments.filter((s) => s.status !== 'DELIVERED').length;
@@ -657,63 +680,78 @@ export default function ManagerDashboard() {
     return matchesStatus && matchesSearch;
   });
 
-  // Prepare map markers for main view
-  const mapMarkers: any[] = [];
+  // Prepare map markers for main view (Memoized to eliminate Leaflet re-render thrashing)
+  const mapMarkers = useMemo(() => {
+    const markers: any[] = [];
 
-  if (selectedShipment) {
-    const cargoTitle = selectedShipment.product_name || selectedShipment.cargo_type || 'Cold Cargo';
-    const minT = selectedShipment.min_temp ?? selectedShipment.required_temp_min;
-    const maxT = selectedShipment.max_temp ?? selectedShipment.required_temp_max;
-    const curT = selectedShipment.current_temp;
+    if (selectedShipment) {
+      const cargoTitle = selectedShipment.product_name || selectedShipment.cargo_type || 'Cold Cargo';
+      const minT = selectedShipment.min_temp ?? selectedShipment.required_temp_min;
+      const maxT = selectedShipment.max_temp ?? selectedShipment.required_temp_max;
+      const curT = selectedShipment.current_temp;
 
-    // Origin
-    if (selectedShipment.origin_lat && selectedShipment.origin_lng) {
-      mapMarkers.push({
-        lat: Number(selectedShipment.origin_lat),
-        lng: Number(selectedShipment.origin_lng),
-        title: `Origin: ${selectedShipment.origin_name}`,
-        description: `Dispatch Hub | Required: ${minT}°C to ${maxT}°C`,
-        type: 'origin',
-      });
+      // Origin
+      if (selectedShipment.origin_lat && selectedShipment.origin_lng) {
+        markers.push({
+          lat: Number(selectedShipment.origin_lat),
+          lng: Number(selectedShipment.origin_lng),
+          title: `Origin: ${selectedShipment.origin_name}`,
+          description: `Dispatch Hub | Required: ${minT}°C to ${maxT}°C`,
+          type: 'origin',
+        });
+      }
+
+      // In-transit truck location
+      const truckLat = Number(selectedShipment.current_lat || selectedShipment.origin_lat);
+      const truckLng = Number(selectedShipment.current_lng || selectedShipment.origin_lng);
+      if (truckLat && truckLng) {
+        markers.push({
+          lat: truckLat,
+          lng: truckLng,
+          title: `Truck Location (${selectedShipment.tracking_number || '#' + selectedShipment.id})`,
+          description: `Payload: ${cargoTitle} | Current Temp: ${curT != null ? curT + '°C' : 'Stable'} | Status: ${selectedShipment.status}`,
+          type: 'truck',
+        });
+      }
+
+      // Destination
+      if (selectedShipment.destination_lat && selectedShipment.destination_lng) {
+        markers.push({
+          lat: Number(selectedShipment.destination_lat),
+          lng: Number(selectedShipment.destination_lng),
+          title: `Destination: ${selectedShipment.destination_name}`,
+          description: `Receiving Facility | ${selectedShipment.status}`,
+          type: 'destination',
+        });
+      }
     }
 
-    // In-transit truck location
-    const truckLat = Number(selectedShipment.current_lat || selectedShipment.origin_lat);
-    const truckLng = Number(selectedShipment.current_lng || selectedShipment.origin_lng);
-    if (truckLat && truckLng) {
-      mapMarkers.push({
-        lat: truckLat,
-        lng: truckLng,
-        title: `Truck Location (${selectedShipment.tracking_number || '#' + selectedShipment.id})`,
-        description: `Payload: ${cargoTitle} | Current Temp: ${curT != null ? curT + '°C' : 'Stable'} | Status: ${selectedShipment.status}`,
-        type: 'truck',
-      });
-    }
+    // Emergency storage facilities on map
+    facilities.forEach((f) => {
+      if (f.latitude && f.longitude) {
+        markers.push({
+          lat: Number(f.latitude),
+          lng: Number(f.longitude),
+          title: `Storage Facility: ${f.name}`,
+          description: `Available Capacity: ${f.available_capacity ?? f.capacity} units | Status: ${f.status || 'OPERATIONAL'}`,
+          type: 'facility',
+        });
+      }
+    });
 
-    // Destination
-    if (selectedShipment.destination_lat && selectedShipment.destination_lng) {
-      mapMarkers.push({
-        lat: Number(selectedShipment.destination_lat),
-        lng: Number(selectedShipment.destination_lng),
-        title: `Destination: ${selectedShipment.destination_name}`,
-        description: `Receiving Facility | ${selectedShipment.status}`,
-        type: 'destination',
-      });
-    }
-  }
-
-  // Emergency storage facilities on map
-  facilities.forEach((f) => {
-    if (f.latitude && f.longitude) {
-      mapMarkers.push({
-        lat: Number(f.latitude),
-        lng: Number(f.longitude),
-        title: `Storage Facility: ${f.name}`,
-        description: `Available Capacity: ${f.available_capacity ?? f.capacity} units | Status: ${f.status || 'OPERATIONAL'}`,
-        type: 'facility',
-      });
-    }
-  });
+    return markers;
+  }, [
+    selectedShipment?.id,
+    selectedShipment?.current_lat,
+    selectedShipment?.current_lng,
+    selectedShipment?.current_temp,
+    selectedShipment?.status,
+    selectedShipment?.origin_lat,
+    selectedShipment?.origin_lng,
+    selectedShipment?.destination_lat,
+    selectedShipment?.destination_lng,
+    facilities
+  ]);
 
   // Modal map markers for location pin preview
   const modalMarkers: any[] = [
@@ -1633,38 +1671,46 @@ export default function ManagerDashboard() {
                       </span>
                     </div>
 
-                    {availableDrivers.length > 0 ? (
-                      <select
-                        required
-                        value={newShipment.driver_name}
-                        onChange={(e) => {
-                          const driver = FLEET_DRIVERS.find((d) => d.name === e.target.value);
-                          if (driver) {
-                            setNewShipment({
-                              ...newShipment,
-                              driver_name: driver.name,
-                              driver_phone: driver.phone,
-                            });
-                          } else {
-                            setNewShipment({
-                              ...newShipment,
-                              driver_name: '',
-                              driver_phone: '',
-                            });
-                          }
-                        }}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-white text-slate-900"
-                      >
-                        <option value="">-- Choose Available Driver --</option>
-                        {availableDrivers.map((d) => (
-                          <option key={d.id} value={d.name}>
-                            {d.name} • {d.vehicle}
+                    <select
+                      required
+                      value={newShipment.driver_name}
+                      onChange={(e) => {
+                        const driver = FLEET_DRIVERS.find((d) => d.name === e.target.value);
+                        if (driver && !busyDriversMap.has(driver.name.toLowerCase().trim())) {
+                          setNewShipment({
+                            ...newShipment,
+                            driver_name: driver.name,
+                            driver_phone: driver.phone,
+                          });
+                        } else {
+                          setNewShipment({
+                            ...newShipment,
+                            driver_name: '',
+                            driver_phone: '',
+                          });
+                        }
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">-- Select Available Driver --</option>
+                      {FLEET_DRIVERS.map((d) => {
+                        const activeMission = busyDriversMap.get(d.name.toLowerCase().trim());
+                        const isBusy = !!activeMission;
+                        return (
+                          <option
+                            key={d.id}
+                            value={d.name}
+                            disabled={isBusy}
+                            className={isBusy ? 'text-slate-400 bg-slate-100 italic' : 'text-slate-900 font-semibold'}
+                          >
+                            {d.name} {isBusy ? `🚫 [BUSY on ${activeMission.tracking_number || '#' + activeMission.id}]` : `✅ Available (${d.vehicle})`}
                           </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="text-[11px] text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200">
-                        All registered drivers are currently on active deliveries. Completing an ongoing delivery will free them up.
+                        );
+                      })}
+                    </select>
+                    {availableDrivers.length === 0 && (
+                      <div className="text-[11px] text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200 mt-1">
+                        All registered drivers are currently on active deliveries. A driver only becomes available once their shipment is delivered.
                       </div>
                     )}
 

@@ -1,60 +1,62 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import 'leaflet/dist/leaflet.css';
 
-export interface MapMarker {
+interface MapMarker {
   lat: number;
   lng: number;
   title: string;
   description?: string;
-  type?: 'truck' | 'origin' | 'destination' | 'facility' | 'pin';
+  type?: 'origin' | 'destination' | 'truck' | 'facility' | 'pin';
 }
 
-interface MapProps {
+interface LeafletMapProps {
+  center?: [number, number];
+  zoom?: number;
   markers?: MapMarker[];
   routeCoordinates?: Array<[number, number]>;
-  zoom?: number;
-  center?: [number, number];
   routeColor?: string;
   onMapClick?: (lat: number, lng: number) => void;
   className?: string;
 }
 
 export default function LeafletMap({
+  center = [15.35, 73.95],
+  zoom = 11,
   markers = [],
   routeCoordinates = [],
-  zoom = 10,
-  center = [15.3800, 73.9200],
   routeColor = '#2563EB',
   onMapClick,
-  className = 'w-full h-full min-h-[520px] rounded-2xl z-10',
-}: MapProps) {
+  className = 'w-full h-full',
+}: LeafletMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const LRef = useRef<any>(null);
   const layerGroupRef = useRef<any>(null);
-  const truckMarkerRef = useRef<any>(null);
   const polylineRef = useRef<any>(null);
+  const truckMarkerRef = useRef<any>(null);
   const markersMapRef = useRef<Map<string, any>>(new Map());
-  const hasFitBoundsRef = useRef<boolean>(false);
   const onMapClickRef = useRef(onMapClick);
-  onMapClickRef.current = onMapClick;
-
   const lastRouteSigRef = useRef<string>('');
+  const hasFitInitialBoundsRef = useRef(false);
 
-  // 1. Initialize Leaflet Map Instance Once
   useEffect(() => {
-    if (typeof window === 'undefined' || !containerRef.current) return;
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
+
+  // 1. Initialize Leaflet Map once
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
 
     let isMounted = true;
+    let resizeTimer: any = null;
+    let ro: ResizeObserver | null = null;
 
     import('leaflet').then((L) => {
-      if (!isMounted || !containerRef.current || mapRef.current) return;
-
+      if (!isMounted || !containerRef.current) return;
       LRef.current = L;
 
-      // Fix default icons in Next.js
+      // Fix default marker icons in Next.js bundlers
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
         iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
@@ -84,11 +86,24 @@ export default function LeafletMap({
         }
       });
 
-      // Smooth ResizeObserver to avoid glitchy setTimeout calls
+      // Rock-solid debounced ResizeObserver (prevents infinite resize/flicker loops)
       if (typeof window !== 'undefined' && 'ResizeObserver' in window && containerRef.current) {
-        const ro = new ResizeObserver(() => {
-          if (mapRef.current) {
-            mapRef.current.invalidateSize({ pan: false });
+        let lastWidth = containerRef.current.clientWidth;
+        let lastHeight = containerRef.current.clientHeight;
+
+        ro = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const { width, height } = entry.contentRect;
+            if (Math.abs(width - lastWidth) >= 4 || Math.abs(height - lastHeight) >= 4) {
+              lastWidth = width;
+              lastHeight = height;
+              clearTimeout(resizeTimer);
+              resizeTimer = setTimeout(() => {
+                if (mapRef.current) {
+                  mapRef.current.invalidateSize({ pan: false });
+                }
+              }, 120);
+            }
           }
         });
         ro.observe(containerRef.current);
@@ -97,6 +112,10 @@ export default function LeafletMap({
 
     return () => {
       isMounted = false;
+      clearTimeout(resizeTimer);
+      if (ro) {
+        ro.disconnect();
+      }
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -104,7 +123,7 @@ export default function LeafletMap({
     };
   }, []);
 
-  // 2. Synchronize Layers & Markers without clearing or glitching
+  // 2. Synchronize Layers & Markers without glitching or tearing down layers
   useEffect(() => {
     const map = mapRef.current;
     const L = LRef.current;
@@ -113,7 +132,7 @@ export default function LeafletMap({
 
     // A. Update or Draw Polyline
     const routeSig = routeCoordinates && routeCoordinates.length > 0
-      ? `${routeCoordinates[0][0]}_${routeCoordinates[0][1]}_${routeCoordinates.length}`
+      ? `${routeCoordinates[0][0]}_${routeCoordinates[0][1]}_${routeCoordinates[routeCoordinates.length - 1][0]}_${routeCoordinates.length}`
       : '';
 
     const routeChanged = routeSig !== lastRouteSigRef.current;
@@ -134,11 +153,13 @@ export default function LeafletMap({
           polylineRef.current = polyline;
         }
 
-        // Fit bounds once on route load
-        if (!hasFitBoundsRef.current) {
-          map.fitBounds(polylineRef.current.getBounds(), { padding: [35, 35] });
-          hasFitBoundsRef.current = true;
-        }
+        // Smoothly fit bounds when a new route is loaded
+        try {
+          const bounds = polylineRef.current.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15, animate: true });
+          }
+        } catch {}
       } else if (polylineRef.current) {
         layerGroup.removeLayer(polylineRef.current);
         polylineRef.current = null;
@@ -147,14 +168,14 @@ export default function LeafletMap({
       polylineRef.current.setStyle({ color: routeColor });
     }
 
-    // B. Update Truck Marker Smoothly (Zero recreation, 0 flicker)
+    // B. Smooth Live Truck Marker (Zero flicker, position updated via setLatLng)
     const truckItem = markers.find((m) => m.type === 'truck');
     if (truckItem && !isNaN(truckItem.lat) && !isNaN(truckItem.lng)) {
       const latLng = L.latLng(truckItem.lat, truckItem.lng);
       if (truckMarkerRef.current) {
         truckMarkerRef.current.setLatLng(latLng);
         const popup = truckMarkerRef.current.getPopup();
-        if (popup) {
+        if (popup && popup.isOpen()) {
           popup.setContent(`
             <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4;">
               <b style="color: #0f172a;">${truckItem.title}</b>
@@ -194,7 +215,7 @@ export default function LeafletMap({
       truckMarkerRef.current = null;
     }
 
-    // C. Synchronize Static / Facility / Pin Markers without wiping
+    // C. Static / Facility / Pin Markers (Diffed and updated by key)
     const currentKeys = new Set<string>();
     const staticItems = markers.filter((m) => m.type !== 'truck');
 
@@ -246,8 +267,8 @@ export default function LeafletMap({
       }
     }
 
-    // Initial bounds fit if no route exists
-    if (!hasFitBoundsRef.current && (!routeCoordinates || routeCoordinates.length === 0) && markers.length > 0) {
+    // Initial bounds fit once only when no route is available
+    if (!hasFitInitialBoundsRef.current && (!routeCoordinates || routeCoordinates.length === 0) && markers.length > 0) {
       const bounds = L.latLngBounds([]);
       markers.forEach((m) => {
         if (m.lat && m.lng && !isNaN(m.lat) && !isNaN(m.lng)) {
@@ -256,7 +277,7 @@ export default function LeafletMap({
       });
       if (bounds.isValid()) {
         map.fitBounds(bounds, { padding: [40, 40] });
-        hasFitBoundsRef.current = true;
+        hasFitInitialBoundsRef.current = true;
       }
     }
   }, [markers, routeCoordinates, routeColor]);

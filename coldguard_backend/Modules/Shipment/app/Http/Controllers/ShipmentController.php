@@ -77,6 +77,19 @@ class ShipmentController extends Controller
             'driver_phone' => 'nullable|string|max:50',
         ]);
 
+        if (!empty($validated['driver_name'])) {
+            $activeDriverShipment = Shipment::where('driver_name', $validated['driver_name'])
+                ->whereNotIn('status', ['DELIVERED', 'COMPROMISED', 'CANCELLED'])
+                ->first();
+
+            if ($activeDriverShipment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Driver '{$validated['driver_name']}' is currently assigned to active shipment {$activeDriverShipment->tracking_number} (status: {$activeDriverShipment->status}). Only after delivering that shipment can this driver be assigned to a new one.",
+                ], 422);
+            }
+        }
+
         if (empty($validated['tracking_number'])) {
             $validated['tracking_number'] = 'CG-2026-' . strtoupper(Str::random(6));
         }
