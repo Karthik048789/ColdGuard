@@ -55,7 +55,7 @@ class RoutingService
     /**
      * Calculate multi-waypoint road route (Truck -> Emergency Facility -> Receiver).
      */
-    public function calculateRoute(Shipment $shipment, ?int $facilityId = null): array
+    public function calculateRoute(Shipment $shipment, ?int $facilityId = null, bool $direct = false): array
     {
         // 1. Fetch latest telemetry for current truck GPS coordinates
         $latestTelemetry = Telemetry::where('shipment_id', $shipment->id)
@@ -87,7 +87,9 @@ class RoutingService
         $selectedFacility = null;
         $facilityData = null;
 
-        if (!is_null($facilityId)) {
+        if ($direct) {
+            $selectedFacility = null;
+        } elseif (!is_null($facilityId)) {
             $facility = Facility::find($facilityId);
 
             if (!$facility) {
@@ -107,8 +109,8 @@ class RoutingService
             }
 
             $selectedFacility = $facility;
-        } else {
-            // Check if FacilityService finds an eligible recommended facility
+        } elseif (in_array($shipment->status, ['WARNING', 'CRITICAL', 'REROUTED'])) {
+            // Check if FacilityService finds an eligible recommended facility during emergency
             $facilityResult = $this->facilityService->getEligibleFacilitiesForShipment($shipment);
             if ($facilityResult['success'] && !empty($facilityResult['data']['recommended_facility'])) {
                 $rec = $facilityResult['data']['recommended_facility'];
@@ -137,15 +139,17 @@ class RoutingService
             ];
         }
 
-        // 4. Build Multi-Waypoint Sequence: Truck -> Facility (optional) -> Receiver Destination
+        // 4. Build Waypoint Sequence
         $waypoints = [];
         $waypoints[] = ['latitude' => $truckLat, 'longitude' => $truckLng];
 
         if ($selectedFacility) {
+            // Emergency excursion diversion: destination is the cold storage facility
             $waypoints[] = ['latitude' => (float) $selectedFacility->latitude, 'longitude' => (float) $selectedFacility->longitude];
+        } else {
+            // Standard transit: route directly to destination hospital
+            $waypoints[] = ['latitude' => $destLat, 'longitude' => $destLng];
         }
-
-        $waypoints[] = ['latitude' => $destLat, 'longitude' => $destLng];
 
         // 5. Invoke OsrmService for real road routing
         $osrmResult = $this->osrmService->getRoute($waypoints);

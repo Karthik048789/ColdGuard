@@ -2,29 +2,28 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { apiFetch, getAuthUser, clearAuthSession } from '@/lib/api';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { apiFetch, getAuthUser, setAuthSession, clearAuthSession } from '@/lib/api';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<'home' | 'features' | 'api' | 'about' | 'contact'>('home');
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<'home' | 'features'>('home');
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [showRoleModal, setShowRoleModal] = useState(false);
-  const [showApiModal, setShowApiModal] = useState(false);
-  const [apiHealthData, setApiHealthData] = useState<any>(null);
+  
+  // Auth Modal State
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('manager@coldguard.ai');
+  const [password, setPassword] = useState('password123');
+  const [name, setName] = useState('');
+  const [role, setRole] = useState<'manager' | 'driver' | 'receiver'>('manager');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const user = getAuthUser();
     if (user) setCurrentUser(user);
-
-    apiFetch<any>('/health')
-      .then((data) => {
-        setBackendStatus('online');
-        setApiHealthData(data);
-      })
-      .catch((err) => {
-        console.warn('Backend check:', err);
-        setBackendStatus('offline');
-      });
   }, []);
 
   const handleLogout = () => {
@@ -32,17 +31,91 @@ export default function HomePage() {
     setCurrentUser(null);
   };
 
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (authMode === 'login') {
+        const response = await apiFetch<any>('/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
+
+        if (response?.data?.token && response?.data?.user) {
+          setAuthSession(response.data.token, response.data.user);
+          const userRole = response.data.user.role;
+          setShowAuthModal(false);
+          
+          // Automatic Role Redirection
+          if (userRole === 'driver') {
+            router.push('/driver');
+          } else if (userRole === 'receiver') {
+            router.push('/receiver');
+          } else {
+            router.push('/manager');
+          }
+        } else {
+          throw new Error('Invalid authentication response');
+        }
+      } else {
+        // Sign Up Mode
+        const response = await apiFetch<any>('/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: name || email.split('@')[0],
+            email,
+            password,
+            role,
+          }),
+        });
+
+        if (response?.data?.token && response?.data?.user) {
+          setAuthSession(response.data.token, response.data.user);
+          const userRole = response.data.user.role;
+          setShowAuthModal(false);
+
+          if (userRole === 'driver') {
+            router.push('/driver');
+          } else if (userRole === 'receiver') {
+            router.push('/receiver');
+          } else {
+            router.push('/manager');
+          }
+        } else {
+          throw new Error('Registration failed');
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed. Please check credentials.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickFill = (roleChoice: 'manager' | 'driver' | 'receiver') => {
+    setEmail(`${roleChoice}@coldguard.ai`);
+    setPassword('password123');
+    setRole(roleChoice);
+  };
+
   return (
     <div className="min-h-screen bg-white flex flex-col justify-between selection:bg-blue-600 selection:text-white font-sans">
       
       {/* Top Navigation Bar */}
-      <header className="w-full max-w-7xl mx-auto px-6 sm:px-10 py-6 flex items-center justify-between z-30">
-        {/* Brand Logo */}
+      <header className="w-full max-w-[1400px] mx-auto px-4 sm:px-8 py-6 flex items-center justify-between z-30">
+        {/* Official Brand Logo */}
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
+          <div className="w-10 h-10 flex items-center justify-center group-hover:scale-105 transition-transform">
+            <Image
+              src="/logo-transparent.png"
+              alt="ColdGuard Logo"
+              width={40}
+              height={40}
+              priority
+              className="object-contain"
+            />
           </div>
           <div className="flex flex-col">
             <span className="text-xl font-black tracking-tight text-slate-900 leading-tight">
@@ -70,30 +143,6 @@ export default function HomePage() {
           >
             Features
           </a>
-          <button
-            onClick={() => {
-              setActiveTab('api');
-              setShowApiModal(true);
-            }}
-            className={`transition-colors py-1 flex items-center gap-1.5 ${activeTab === 'api' ? 'text-blue-600' : 'hover:text-blue-600'}`}
-          >
-            API
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="API Live" />
-          </button>
-          <a
-            href="#about"
-            onClick={() => setActiveTab('about')}
-            className={`transition-colors py-1 ${activeTab === 'about' ? 'text-blue-600' : 'hover:text-blue-600'}`}
-          >
-            About
-          </a>
-          <a
-            href="#contact"
-            onClick={() => setActiveTab('contact')}
-            className={`transition-colors py-1 ${activeTab === 'contact' ? 'text-blue-600' : 'hover:text-blue-600'}`}
-          >
-            Contact
-          </a>
         </nav>
 
         {/* Right Auth / Portal Controls */}
@@ -115,14 +164,20 @@ export default function HomePage() {
             </div>
           ) : (
             <>
-              <Link
-                href="/login"
-                className="px-5 py-2 rounded-xl text-sm font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-all shadow-sm"
-              >
-                Login
-              </Link>
               <button
-                onClick={() => setShowRoleModal(true)}
+                onClick={() => {
+                  setAuthMode('login');
+                  setShowAuthModal(true);
+                }}
+                className="px-5 py-2 rounded-xl text-sm font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-all shadow-sm cursor-pointer"
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => {
+                  setAuthMode('register');
+                  setShowAuthModal(true);
+                }}
                 className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
               >
                 Sign Up
@@ -133,160 +188,116 @@ export default function HomePage() {
       </header>
 
       {/* Main Hero Section */}
-      <main className="relative flex-1 w-full overflow-hidden">
-        {/* Subtle Background Glow */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-blue-500/5 blur-[120px] rounded-full pointer-events-none" />
-
-        {/* Content Container */}
-        <div className="relative z-10 max-w-7xl mx-auto px-6 sm:px-10 pt-12 sm:pt-20 pb-20">
-          <div className="max-w-3xl">
-            {/* Category Tag */}
+      <main className="relative flex-1 w-full max-w-[1400px] mx-auto px-4 sm:px-8 py-6 sm:py-10 flex flex-col justify-between">
+        
+        {/* 2-Column Hero Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-center">
+          
+          {/* Left Column: Text Content */}
+          <div className="lg:col-span-5 flex flex-col items-start text-left pl-0 sm:pl-2 pt-8 sm:pt-16">
+            
+            {/* Tag */}
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-xs font-black tracking-[0.2em] text-slate-400 uppercase">
-                COLD CHAIN LOGISTICS
-              </span>
-              <span className="h-1 w-1 rounded-full bg-blue-500" />
-              <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200/60">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {backendStatus === 'online' ? 'Engine Online' : 'Connecting Engine...'}
+              <span className="text-xs font-black tracking-[0.16em] text-slate-400 uppercase">
+                COLD CHAIN FOR A HEALTHIER TOMORROW
               </span>
             </div>
 
             {/* Bold Hero Title */}
             <h1 className="text-4xl sm:text-6xl font-black text-slate-900 tracking-tight leading-[1.08]">
-              Temperature Controlled.<br />
-              <span className="text-blue-600">Life Delivered.</span>
+              Delivering<br />
+              <span className="text-blue-600">Healthier Tomorrows.</span>
             </h1>
 
             {/* Subtitle Description */}
-            <p className="mt-6 text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-xl">
-              Reliable truck transport for temperature-sensitive medicines and vaccines, with real-time tracking and intelligent logistics &mdash; across the country.
+            <p className="mt-6 text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-lg">
+              Temperature Controlled Medical Logistics for vaccines, biologics, and critical pharmaceuticals &mdash; maintaining cold chain integrity at every step.
             </p>
 
-            {/* CTA Button Group */}
-            <div className="mt-8 flex flex-wrap items-center gap-4">
+            {/* CTA Button */}
+            <div className="mt-8">
               <button
-                onClick={() => setShowRoleModal(true)}
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/25 transition-all hover:gap-3 cursor-pointer"
+                onClick={() => {
+                  setAuthMode('login');
+                  setShowAuthModal(true);
+                }}
+                className="inline-flex items-center gap-2.5 px-8 py-4 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/25 transition-all hover:gap-3.5 cursor-pointer"
               >
                 <span>Get Started</span>
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                 </svg>
               </button>
-
-              <button
-                onClick={() => setShowApiModal(true)}
-                className="inline-flex items-center gap-2 px-5 py-3.5 rounded-xl font-bold text-sm text-slate-700 bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 transition-all cursor-pointer shadow-sm"
-              >
-                <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                </svg>
-                <span>Explore 27 APIs</span>
-              </button>
-            </div>
-
-            {/* 4 Feature Badges */}
-            <div id="features" className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mt-16 sm:mt-24 pt-8 border-t border-slate-100">
-              <div className="flex flex-col gap-2 group cursor-default">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <h4 className="text-xs font-bold text-slate-900 leading-snug">Real-time Monitoring</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed">Track temperature and location live.</p>
-              </div>
-
-              <div className="flex flex-col gap-2 group cursor-default">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                </div>
-                <h4 className="text-xs font-bold text-slate-900 leading-snug">Secure Delivery</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed">Maintain cold chain integrity at every step.</p>
-              </div>
-
-              <div className="flex flex-col gap-2 group cursor-default">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-                  </svg>
-                </div>
-                <h4 className="text-xs font-bold text-slate-900 leading-snug">Optimized Routes</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed">Faster, safer delivery across regions.</p>
-              </div>
-
-              <div
-                onClick={() => setShowApiModal(true)}
-                className="flex flex-col gap-2 group cursor-pointer hover:opacity-80 transition-opacity"
-              >
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                  </svg>
-                </div>
-                <h4 className="text-xs font-bold text-blue-600 leading-snug flex items-center gap-1">
-                  Powerful APIs &rarr;
-                </h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed">Integrate with your systems seamlessly.</p>
-              </div>
             </div>
           </div>
+
+          {/* Right Column: RAW CONTAINER IMAGE */}
+          <div className="lg:col-span-7 flex items-center justify-center lg:justify-end">
+            <div className="relative w-full max-w-2xl">
+              <Image
+                src="/hero-container-transparent.png"
+                alt="Medical Cold Chain Container"
+                width={850}
+                height={580}
+                priority
+                className="w-full h-auto object-contain hover:scale-[1.02] transition-transform duration-300 pointer-events-none drop-shadow-md"
+              />
+            </div>
+          </div>
+
         </div>
+
+        {/* 4 Feature Badges at Bottom */}
+        <div id="features" className="grid grid-cols-2 sm:grid-cols-4 gap-6 mt-16 pt-8 border-t border-slate-100">
+          <div className="flex flex-col gap-2 group cursor-default">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h4 className="text-xs font-bold text-slate-900 leading-snug">Real-time Monitoring</h4>
+            <p className="text-[11px] text-slate-400 leading-relaxed">Track temperature and location live.</p>
+          </div>
+
+          <div className="flex flex-col gap-2 group cursor-default">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+            </div>
+            <h4 className="text-xs font-bold text-slate-900 leading-snug">Secure Delivery</h4>
+            <p className="text-[11px] text-slate-400 leading-relaxed">Maintain cold chain integrity at every step.</p>
+          </div>
+
+          <div className="flex flex-col gap-2 group cursor-default">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+              </svg>
+            </div>
+            <h4 className="text-xs font-bold text-slate-900 leading-snug">Optimized Routes</h4>
+            <p className="text-[11px] text-slate-400 leading-relaxed">Faster, safer delivery across regions.</p>
+          </div>
+
+          <div className="flex flex-col gap-2 group cursor-default">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <h4 className="text-xs font-bold text-slate-900 leading-snug">Smart Rerouting</h4>
+            <p className="text-[11px] text-slate-400 leading-relaxed">Automatic cold-storage emergency diversion.</p>
+          </div>
+        </div>
+
       </main>
 
-      {/* About & Contact Section */}
-      <section id="about" className="border-t border-slate-100 bg-slate-50/60 py-16 px-6 sm:px-10">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-10">
-          <div className="flex flex-col gap-3">
-            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Mission Critical Guard</h3>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              ColdGuard AI utilizes state-of-the-art telemetry ingestion, deterministic risk evaluation, and emergency cold-facility diversion routing powered by OpenStreetMap OSRM.
-            </p>
-          </div>
-
-          <div id="contact" className="flex flex-col gap-3">
-            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Contact Logistics Support</h3>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              HQ Logistics Support: <span className="font-bold text-blue-600">support@coldguard.ai</span><br />
-              Emergency Cold Storage Hotline: <span className="font-bold text-slate-700">+91 98765 43210</span>
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Backend Engine Status</h3>
-            <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm flex flex-col gap-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Engine URL:</span>
-                <span className="font-mono font-bold text-blue-600 text-[10px] truncate max-w-[170px]">
-                  coldguard-backend.onrender.com
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Health Status:</span>
-                <span className="inline-flex items-center gap-1 font-bold text-emerald-600">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  {backendStatus === 'online' ? '200 OK' : 'Checking...'}
-                </span>
-              </div>
-              {apiHealthData && (
-                <div className="text-[10px] font-mono text-slate-400 mt-1 border-t pt-1 border-slate-100">
-                  Service: {apiHealthData.service}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Role Selection Modal */}
-      {showRoleModal && (
+      {/* Direct Sign In / Sign Up Modal */}
+      {showAuthModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-100 relative">
             <button
-              onClick={() => setShowRoleModal(false)}
+              onClick={() => setShowAuthModal(false)}
               className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-2 rounded-full hover:bg-slate-100 transition-colors"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -294,206 +305,182 @@ export default function HomePage() {
               </svg>
             </button>
 
+            {/* Header */}
             <div className="text-center mb-6">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-3">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-3">
+                <Image src="/logo-transparent.png" alt="ColdGuard Logo" width={32} height={32} className="object-contain" />
               </div>
-              <h3 className="text-xl font-black text-slate-900">Select Your Portal</h3>
+              <h3 className="text-xl font-black text-slate-900">
+                {authMode === 'login' ? 'Sign In to ColdGuard' : 'Create an Account'}
+              </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Log in or launch directly into role-specific workflows.
+                {authMode === 'login' 
+                  ? 'Enter credentials to automatically access your role dashboard'
+                  : 'Register your account to access cold chain portals'}
               </p>
             </div>
 
-            <div className="flex flex-col gap-3">
-              <Link
-                href="/manager"
-                onClick={() => setShowRoleModal(false)}
-                className="p-4 rounded-2xl border border-slate-200/80 hover:border-blue-500 hover:bg-blue-50/50 flex items-center justify-between group transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
-                    M
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                      Logistics Manager
-                    </h4>
-                    <p className="text-[11px] text-slate-400">Fleet map, excursion alerts, facility directory</p>
-                  </div>
-                </div>
-                <span className="text-blue-600 font-bold text-sm group-hover:translate-x-1 transition-transform">&rarr;</span>
-              </Link>
-
-              <Link
-                href="/driver"
-                onClick={() => setShowRoleModal(false)}
-                className="p-4 rounded-2xl border border-slate-200/80 hover:border-blue-500 hover:bg-blue-50/50 flex items-center justify-between group transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
-                    D
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                      Transport Driver
-                    </h4>
-                    <p className="text-[11px] text-slate-400">Live turn guidance, GPS & temp simulation</p>
-                  </div>
-                </div>
-                <span className="text-blue-600 font-bold text-sm group-hover:translate-x-1 transition-transform">&rarr;</span>
-              </Link>
-
-              <Link
-                href="/receiver"
-                onClick={() => setShowRoleModal(false)}
-                className="p-4 rounded-2xl border border-slate-200/80 hover:border-blue-500 hover:bg-blue-50/50 flex items-center justify-between group transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
-                    R
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                      Hospital / Receiver
-                    </h4>
-                    <p className="text-[11px] text-slate-400">Shipment tracking & cold-chain compliance</p>
-                  </div>
-                </div>
-                <span className="text-blue-600 font-bold text-sm group-hover:translate-x-1 transition-transform">&rarr;</span>
-              </Link>
-            </div>
-
-            <div className="mt-6 pt-4 border-t border-slate-100 text-center">
-              <Link
-                href="/login"
-                onClick={() => setShowRoleModal(false)}
-                className="text-xs font-bold text-blue-600 hover:underline"
-              >
-                Already have credentials? Sign In here &rarr;
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* API Explorer Modal */}
-      {showApiModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-100 relative">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                  &lt;/&gt;
-                </div>
-                <div>
-                  <h3 className="text-lg font-black text-slate-900">ColdGuard API Engine (27 Endpoints)</h3>
-                  <p className="text-xs text-slate-400 font-mono">Base URL: https://coldguard-backend.onrender.com/api</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowApiModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-2 rounded-full hover:bg-slate-100 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            {error && (
+              <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold flex items-center gap-2">
+                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-              </button>
-            </div>
+                <span>{error}</span>
+              </div>
+            )}
 
-            <div className="p-6 overflow-y-auto space-y-3 font-mono text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">GET</span>
-                  <span className="font-bold text-slate-800">/health</span>
+            {/* Quick Demo Fill Buttons (Login mode) */}
+            {authMode === 'login' && (
+              <div className="mb-4">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Quick Demo Login Accounts
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleQuickFill('manager')}
+                    className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                      email.includes('manager')
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Manager
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickFill('driver')}
+                    className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                      email.includes('driver')
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Driver
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickFill('receiver')}
+                    className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                      email.includes('receiver')
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Receiver
+                  </button>
                 </div>
-                <span className="text-slate-500 font-sans text-[11px]">Backend health verification</span>
+              </div>
+            )}
+
+            {/* Form */}
+            <form onSubmit={handleAuthSubmit} className="space-y-3.5">
+              {authMode === 'register' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Dr. Anjali Sharma"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                />
               </div>
 
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">POST</span>
-                  <span className="font-bold text-slate-800">/auth/login</span>
-                </div>
-                <span className="text-slate-500 font-sans text-[11px]">Issue Bearer Sanctum token</span>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                />
               </div>
 
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">GET</span>
-                  <span className="font-bold text-slate-800">/shipments</span>
+              {authMode === 'register' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Designated Role</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as any)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all font-medium bg-white"
+                  >
+                    <option value="manager">Logistics Manager (HQ Portal)</option>
+                    <option value="driver">Transport Driver (Mobile HUD)</option>
+                    <option value="receiver">Hospital / Clinic Receiver</option>
+                  </select>
                 </div>
-                <span className="text-slate-500 font-sans text-[11px]">List all shipments</span>
-              </div>
+              )}
 
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">POST</span>
-                  <span className="font-bold text-slate-800">/shipments</span>
-                </div>
-                <span className="text-slate-500 font-sans text-[11px]">Create temperature-controlled shipment</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">POST</span>
-                  <span className="font-bold text-slate-800">/shipments/{"{id}"}/telemetry/simulate</span>
-                </div>
-                <span className="text-slate-500 font-sans text-[11px]">Simulate GPS & temp excursions</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">GET</span>
-                  <span className="font-bold text-slate-800">/shipments/{"{id}"}/route</span>
-                </div>
-                <span className="text-slate-500 font-sans text-[11px]">Dynamic OSRM route & ETA calculation</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">GET</span>
-                  <span className="font-bold text-slate-800">/shipments/{"{id}"}/intervention</span>
-                </div>
-                <span className="text-slate-500 font-sans text-[11px]">Active emergency diversion details</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">GET</span>
-                  <span className="font-bold text-slate-800">/facilities</span>
-                </div>
-                <span className="text-slate-500 font-sans text-[11px]">Cold-storage facilities directory</span>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between rounded-b-3xl">
-              <span className="text-xs text-slate-500 font-sans">
-                Full documentation in <span className="font-mono font-bold">ColdGuard_API_Documentation.xlsx</span>
-              </span>
               <button
-                onClick={() => setShowApiModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md shadow-blue-500/25 transition-all disabled:opacity-50 mt-2 flex items-center justify-center gap-2 cursor-pointer"
               >
-                Close
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Processing...
+                  </span>
+                ) : authMode === 'login' ? (
+                  'Sign In & Launch Dashboard'
+                ) : (
+                  'Create Account'
+                )}
               </button>
+            </form>
+
+            {/* Toggle Mode Footer */}
+            <div className="mt-5 pt-4 border-t border-slate-100 text-center text-xs">
+              {authMode === 'login' ? (
+                <span className="text-slate-500">
+                  Don&apos;t have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('register');
+                      setError(null);
+                    }}
+                    className="font-bold text-blue-600 hover:underline cursor-pointer ml-1"
+                  >
+                    Sign Up here
+                  </button>
+                </span>
+              ) : (
+                <span className="text-slate-500">
+                  Already have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('login');
+                      setError(null);
+                    }}
+                    className="font-bold text-blue-600 hover:underline cursor-pointer ml-1"
+                  >
+                    Sign In here
+                  </button>
+                </span>
+              )}
             </div>
+
           </div>
         </div>
       )}
 
-      {/* Modern Footer */}
-      <footer className="border-t border-slate-100 bg-white py-6 px-6 sm:px-10 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-3">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-slate-700">ColdGuard AI</span>
-          <span>&bull;</span>
-          <span>Pharma Cold-Chain Logistics</span>
-        </div>
-        <div>
-          Connected to Render Production API &bull; Base URL: <code className="text-blue-600 font-mono">coldguard-backend.onrender.com</code>
-        </div>
-      </footer>
     </div>
   );
 }
