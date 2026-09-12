@@ -154,8 +154,9 @@ export default function MapLibreNavMap({
   const cameraModeRef = useRef<'drive' | 'overview'>('overview');
   cameraModeRef.current = cameraMode;
 
-  // Projected SVG route path state (Guaranteed 100% visible on top of any raster basemap)
-  const [svgPath, setSvgPath] = useState<string>('');
+  // Path refs for direct sub-pixel hardware DOM updates (0 React re-renders, 0 glitches)
+  const casingPathRef = useRef<SVGPathElement | null>(null);
+  const corePathRef = useRef<SVGPathElement | null>(null);
 
   // Animation & simulation refs
   const animIdRef = useRef<number | null>(null);
@@ -200,19 +201,19 @@ export default function MapLibreNavMap({
     };
   };
 
-  // Update SVG Projected Path (calculates sub-pixel road alignment on every move/tilt/zoom)
+  // Update SVG Projected Path directly on the DOM (No React re-renders, silky smooth 60fps)
   const updateSvgPath = useCallback(() => {
     const map = mapRef.current;
     const coords = routeCoordsRef.current;
     if (!map || !coords || coords.length < 2) {
-      setSvgPath('');
+      if (casingPathRef.current) casingPathRef.current.setAttribute('d', '');
+      if (corePathRef.current) corePathRef.current.setAttribute('d', '');
       return;
     }
 
     try {
       let d = '';
       const len = coords.length;
-      // Stride for high-performance sub-pixel projection
       const step = len > 800 ? 2 : 1;
       let first = true;
 
@@ -221,13 +222,14 @@ export default function MapLibreNavMap({
         d += (first ? 'M ' : ' L ') + pt.x.toFixed(1) + ' ' + pt.y.toFixed(1);
         first = false;
       }
-      // Ensure last point is included
       const lastPt = map.project(coords[len - 1]);
       d += ' L ' + lastPt.x.toFixed(1) + ' ' + lastPt.y.toFixed(1);
 
-      setSvgPath(d);
+      if (casingPathRef.current) casingPathRef.current.setAttribute('d', d);
+      if (corePathRef.current) corePathRef.current.setAttribute('d', d);
     } catch {
-      setSvgPath('');
+      if (casingPathRef.current) casingPathRef.current.setAttribute('d', '');
+      if (corePathRef.current) corePathRef.current.setAttribute('d', '');
     }
   }, []);
 
@@ -365,8 +367,7 @@ export default function MapLibreNavMap({
       attributionControl: false,
     });
 
-    // Wire up continuous projection updates on move/render
-    map.on('render', updateSvgPath);
+    // Wire up projection updates on move/zoom/pitch (No 'render' event to avoid loop)
     map.on('move', updateSvgPath);
     map.on('zoom', updateSvgPath);
     map.on('rotate', updateSvgPath);
@@ -443,6 +444,7 @@ export default function MapLibreNavMap({
   }, [drawOrUpdateRoute, fitOverviewBounds, updateSvgPath]);
 
   const prevRouteKeyRef = useRef<string>('');
+  const prevEmergRef = useRef<boolean>(isEmergency);
 
   // Update Route Polyline and handle route position without jumping back to origin on stop
   useEffect(() => {
@@ -454,6 +456,8 @@ export default function MapLibreNavMap({
       : '';
 
     const isNewRoute = Boolean(routeKey && routeKey !== prevRouteKeyRef.current);
+    const emergChanged = isEmergency !== prevEmergRef.current;
+
     if (isNewRoute) {
       prevRouteKeyRef.current = routeKey;
 
@@ -467,15 +471,19 @@ export default function MapLibreNavMap({
       if (puckMarkerRef.current && routeCoordinates[startIdx]) {
         puckMarkerRef.current.setLngLat(routeCoordinates[startIdx]);
       }
-    }
 
-    drawOrUpdateRoute(map, routeCoordinates, isEmergency);
-    updateSvgPath();
+      drawOrUpdateRoute(map, routeCoordinates, isEmergency);
+      updateSvgPath();
 
-    if (!isNavigating && isNewRoute) {
-      fitOverviewBounds();
+      if (!isNavigating) {
+        fitOverviewBounds();
+      }
+    } else if (emergChanged) {
+      prevEmergRef.current = isEmergency;
+      drawOrUpdateRoute(map, routeCoordinates, isEmergency);
+      updateSvgPath();
     }
-  }, [routeCoordinates, isEmergency, currentCoord, drawOrUpdateRoute, fitOverviewBounds, isNavigating, updateSvgPath]);
+  }, [routeCoordinates, isEmergency, drawOrUpdateRoute, fitOverviewBounds, isNavigating, updateSvgPath]);
 
   // Update street pill text
   useEffect(() => {
@@ -636,6 +644,7 @@ export default function MapLibreNavMap({
     }
 
     setCameraMode('drive');
+    cameraModeRef.current = 'drive';
     const map = mapRef.current;
     if (!map) return;
 
@@ -662,7 +671,7 @@ export default function MapLibreNavMap({
       const speed = 58 + Math.sin(now / 1400) * 3 + Math.random() * 1.5;
 
       const isEmerg = isEmergencyRef.current;
-      const stepRate = isEmerg ? 1.05 : 0.75;
+      const stepRate = isEmerg ? 2.6 : 1.8;
 
       let idx = routeIndexRef.current + dt * stepRate;
 
@@ -789,9 +798,11 @@ export default function MapLibreNavMap({
 
     if (cameraMode === 'drive') {
       setCameraMode('overview');
+      cameraModeRef.current = 'overview';
       fitOverviewBounds();
     } else {
       setCameraMode('drive');
+      cameraModeRef.current = 'drive';
       const coords = routeCoordsRef.current;
       const idx = Math.floor(routeIndexRef.current);
       const curPt = coords && coords[idx] ? coords[idx] : originCoord || [73.856, 15.4647];
@@ -822,38 +833,36 @@ export default function MapLibreNavMap({
       <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
 
       {/* Guaranteed 100% Projected SVG Navigation Route (Google Maps Electric Blue Flow Path) */}
-      {svgPath && (
-        <svg
-          className="absolute inset-0 w-full h-full pointer-events-none z-[5]"
-          style={{ overflow: 'visible' }}
-        >
-          <defs>
-            <filter id="cg-flow-glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="0" stdDeviation="4.5" floodColor="#2563eb" floodOpacity="0.85" />
-            </filter>
-          </defs>
-          {/* Deep Navy High-Contrast Outer Border */}
-          <path
-            d={svgPath}
-            fill="none"
-            stroke="#174ea6"
-            strokeWidth={14}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity={0.92}
-          />
-          {/* Electric Blue Core Flow Line */}
-          <path
-            d={svgPath}
-            fill="none"
-            stroke={isEmergency ? '#ef4444' : '#1a73e8'}
-            strokeWidth={8}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            filter="url(#cg-flow-glow)"
-          />
-        </svg>
-      )}
+      <svg
+        className="absolute inset-0 w-full h-full pointer-events-none z-[5]"
+        style={{ overflow: 'visible' }}
+      >
+        <defs>
+          <filter id="cg-flow-glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="4.5" floodColor="#2563eb" floodOpacity="0.85" />
+          </filter>
+        </defs>
+        {/* Deep Navy High-Contrast Outer Border */}
+        <path
+          ref={casingPathRef}
+          fill="none"
+          stroke="#174ea6"
+          strokeWidth={14}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={0.92}
+        />
+        {/* Electric Blue Core Flow Line */}
+        <path
+          ref={corePathRef}
+          fill="none"
+          stroke={isEmergency ? '#ef4444' : '#1a73e8'}
+          strokeWidth={8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          filter="url(#cg-flow-glow)"
+        />
+      </svg>
 
       {/* Floating Google Maps Turn Banner */}
       <div className="absolute top-3 left-3 right-3 z-10 pointer-events-none flex justify-center">

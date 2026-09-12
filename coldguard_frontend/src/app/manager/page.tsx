@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import { Shipment, Facility } from '@/lib/types';
@@ -218,6 +218,8 @@ export default function ManagerDashboard() {
   // Modals & Action States
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -435,9 +437,13 @@ export default function ManagerDashboard() {
     });
   };
 
-  // Action: Create and Dispatch Shipment
+  // Action: Create and Dispatch Shipment (Locked to prevent double creation)
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+
     try {
       const res = await apiFetch<any>('/shipments', {
         method: 'POST',
@@ -453,6 +459,9 @@ export default function ManagerDashboard() {
       setTimeout(() => setSuccessBanner(null), 6000);
     } catch (err: any) {
       alert(err.message || 'Failed to dispatch shipment');
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -1770,9 +1779,13 @@ export default function ManagerDashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-2xl text-xs font-black bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-md shadow-blue-500/20"
+                  disabled={isSubmitting}
+                  className={`px-6 py-2.5 rounded-2xl text-xs font-black bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-md shadow-blue-500/20 flex items-center gap-2 ${
+                    isSubmitting ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 >
-                  Confirm & Dispatch Shipment
+                  {isSubmitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  {isSubmitting ? 'Dispatching Shipment...' : 'Confirm & Dispatch Shipment'}
                 </button>
               </div>
             </form>
