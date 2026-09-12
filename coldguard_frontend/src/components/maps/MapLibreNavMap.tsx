@@ -117,7 +117,7 @@ function getTurnIcon(instruction: string = ''): string {
   return '↑';
 }
 
-export default function MapLibreNavMap({
+const MapLibreNavMap = React.memo(function MapLibreNavMap({
   routeCoordinates,
   routeSteps = [],
   isNavigating,
@@ -157,6 +157,15 @@ export default function MapLibreNavMap({
   // Path refs for direct sub-pixel hardware DOM updates (0 React re-renders, 0 glitches)
   const casingPathRef = useRef<SVGPathElement | null>(null);
   const corePathRef = useRef<SVGPathElement | null>(null);
+
+  // Direct DOM hardware refs for HUD updates (0 React re-renders while driving)
+  const speedRef = useRef<HTMLSpanElement | null>(null);
+  const etaTextRef = useRef<HTMLSpanElement | null>(null);
+  const kmTextRef = useRef<HTMLSpanElement | null>(null);
+  const pathKmRef = useRef<HTMLSpanElement | null>(null);
+  const turnIconRef = useRef<HTMLDivElement | null>(null);
+  const turnDistRef = useRef<HTMLDivElement | null>(null);
+  const turnTextRef = useRef<HTMLDivElement | null>(null);
 
   // Animation & simulation refs
   const animIdRef = useRef<number | null>(null);
@@ -476,7 +485,7 @@ export default function MapLibreNavMap({
       drawOrUpdateRoute(map, routeCoordinates, isEmergency);
       updateSvgPath();
     }
-  }, [routeCoordinates, isEmergency, drawOrUpdateRoute, fitOverviewBounds, isNavigating, updateSvgPath]);
+  }, [routeCoordinates, isEmergency]);
 
   // Update street pill text
   useEffect(() => {
@@ -719,17 +728,18 @@ export default function MapLibreNavMap({
           });
         }
 
-        // Throttled update to React HUD (every 1 second, bailed out if unchanged)
+        // Throttled update to React HUD (every 1 second via direct DOM hardware writes - ZERO React re-renders)
         if (now - lastThrottledUpdate > 1000) {
           lastThrottledUpdate = now;
           const roundedSpeed = Math.round(speed);
-          setCurrentSpeed((prev) => (prev !== roundedSpeed ? roundedSpeed : prev));
+          if (speedRef.current) speedRef.current.innerText = String(roundedSpeed);
 
           const remainingPoints = coords.length - idx;
           const remKm = Math.max(0.5, (remainingPoints * 0.055)).toFixed(1);
           const remMin = Math.max(1, Math.round((Number(remKm) / 55) * 60));
-          setRemainingKm((prev) => (prev !== remKm ? remKm : prev));
-          setEtaMinutes((prev) => (prev !== remMin ? remMin : prev));
+          if (etaTextRef.current) etaTextRef.current.innerText = `● ${remMin} min`;
+          if (kmTextRef.current) kmTextRef.current.innerText = `(${remKm} km)`;
+          if (pathKmRef.current) pathKmRef.current.innerText = `${remKm} km`;
 
           const steps = routeStepsRef.current;
           if (steps && steps.length > 0) {
@@ -746,16 +756,16 @@ export default function MapLibreNavMap({
                   : `${Math.round(curStep.distance_m)} m`
                 : '500 m';
 
-              setActiveStepText((prev) => (prev !== instr ? instr : prev));
-              setActiveStepDist((prev) => (prev !== dist ? dist : prev));
+              if (turnTextRef.current) turnTextRef.current.innerText = instr;
+              if (turnDistRef.current) turnDistRef.current.innerText = isEmerg ? `Emergency Reroute • In ${dist}` : `In ${dist}`;
               const icon = getTurnIcon(instr);
-              setActiveTurnIcon((prev) => (prev !== icon ? icon : prev));
+              if (turnIconRef.current) turnIconRef.current.innerText = icon;
             }
           } else {
-            const fallbackText = isEmerg ? `Diverting to ${facilityName}` : `Heading to ${destinationName}`;
-            setActiveStepText((prev) => (prev !== fallbackText ? fallbackText : prev));
-            setActiveStepDist((prev) => (prev !== `${remKm} km` ? `${remKm} km` : prev));
-            setActiveTurnIcon((prev) => (prev !== '↑' ? '↑' : prev));
+            const fallbackText = isEmerg ? `Diverting to ${facilityName || 'Emergency Vault'}` : `Heading to ${destinationName}`;
+            if (turnTextRef.current) turnTextRef.current.innerText = fallbackText;
+            if (turnDistRef.current) turnDistRef.current.innerText = `In ${remKm} km`;
+            if (turnIconRef.current) turnIconRef.current.innerText = '↑';
           }
 
           if (onLocationUpdateRef.current) {
@@ -862,18 +872,18 @@ export default function MapLibreNavMap({
       {/* Floating Google Maps Turn Banner */}
       <div className="absolute top-3 left-3 right-3 z-10 pointer-events-none flex justify-center">
         <div className="bg-[#1a73e8] text-white backdrop-blur-md px-3.5 py-2.5 rounded-2xl shadow-xl shadow-blue-950/40 border border-blue-300/40 flex items-center gap-3 max-w-sm w-full pointer-events-auto">
-          <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-xl font-black shrink-0">
+          <div ref={turnIconRef} className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-xl font-black shrink-0">
             {activeTurnIcon}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] font-extrabold text-blue-100 uppercase tracking-wider">
+            <div ref={turnDistRef} className="text-[10px] font-extrabold text-blue-100 uppercase tracking-wider">
               {isEmergency
                 ? `Emergency Reroute • In ${activeStepDist}`
                 : isNavigating
                 ? `In ${activeStepDist}`
                 : 'Navigation Route Ready'}
             </div>
-            <div className="text-xs font-black truncate text-white leading-tight">
+            <div ref={turnTextRef} className="text-xs font-black truncate text-white leading-tight">
               {isEmergency
                 ? `Divert: ${facilityName || 'Emergency Facility'}`
                 : isNavigating
@@ -896,7 +906,7 @@ export default function MapLibreNavMap({
             <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
             <span className="font-bold text-white truncate">{shortTo}</span>
           </div>
-          <span className="text-emerald-400 font-mono font-bold bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 shrink-0">
+          <span ref={pathKmRef} className="text-emerald-400 font-mono font-bold bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 shrink-0">
             {remainingKm} km
           </span>
         </div>
@@ -945,7 +955,7 @@ export default function MapLibreNavMap({
       {/* Live Speedometer (Bottom-Left like Google Maps / Waze) */}
       <div className="absolute bottom-24 left-4 z-10 pointer-events-none flex flex-col items-center">
         <div className="w-13 h-13 px-2.5 py-1 rounded-full bg-white/95 backdrop-blur-md border-2 border-blue-600 shadow-xl flex flex-col items-center justify-center text-slate-900">
-          <span className="text-base font-black leading-none font-mono">{currentSpeed}</span>
+          <span ref={speedRef} className="text-base font-black leading-none font-mono">{currentSpeed}</span>
           <span className="text-[8px] font-extrabold text-slate-500 uppercase tracking-tighter">km/h</span>
         </div>
       </div>
@@ -954,12 +964,14 @@ export default function MapLibreNavMap({
       {isNavigating && (
         <div className="absolute bottom-24 left-0 right-0 z-10 pointer-events-none flex justify-center">
           <div className="bg-slate-900/90 text-white backdrop-blur-md px-3.5 py-1 rounded-full border border-slate-700 shadow-lg flex items-center gap-2 text-[11px] font-bold">
-            <span className="text-emerald-400">● {etaMinutes} min</span>
-            <span className="text-slate-400">({remainingKm} km)</span>
+            <span ref={etaTextRef} className="text-emerald-400">● {etaMinutes} min</span>
+            <span ref={kmTextRef} className="text-slate-400">({remainingKm} km)</span>
             <span className="text-slate-300">• On Route</span>
           </div>
         </div>
       )}
     </div>
   );
-}
+});
+
+export default MapLibreNavMap;

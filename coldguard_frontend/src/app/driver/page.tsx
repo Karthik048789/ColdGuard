@@ -291,14 +291,14 @@ export default function DriverPage() {
     })();
   }, [token, fetchRouteData]);
 
-  // Periodic Location & Telemetry Sync callback from Map
+  // Periodic Location & Telemetry Sync callback from Map (silent sync, zero render thrash)
   const handleLocationUpdate = useCallback(async (lng: number, lat: number, speed: number) => {
     const tk = tokenRef.current;
     const sid = shipmentIdRef.current;
     if (!tk || !sid) return;
 
     const curT = telemetryRef.current?.temperature ?? 4.2;
-    const newTemp = parseFloat((curT + (Math.random() * 0.06 - 0.03)).toFixed(2));
+    const newTemp = parseFloat((curT + (Math.random() * 0.04 - 0.02)).toFixed(2));
 
     try {
       await fetch(`${API}/shipments/${sid}/telemetry`, {
@@ -313,9 +313,18 @@ export default function DriverPage() {
           recorded_at: new Date().toISOString(),
         }),
       });
-      setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
+      // Keep ref updated silently without forcing React to re-render DriverPage every 1 second
+      if (telemetryRef.current) {
+        telemetryRef.current.latitude = lat;
+        telemetryRef.current.longitude = lng;
+        telemetryRef.current.temperature = newTemp;
+      }
+      // Only trigger React state update if temperature drifted by >= 0.25°C
+      if (Math.abs(newTemp - (telemetry?.temperature ?? 4.2)) >= 0.25) {
+        setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
+      }
     } catch {}
-  }, []);
+  }, [telemetry?.temperature]);
 
   // Handle arrival at either emergency facility or final destination
   const handleArrival = useCallback(async () => {
@@ -820,49 +829,49 @@ export default function DriverPage() {
           </div>
         )}
 
-        {/* Compact 3-Button Glass Pill Dock (Small, Sleek, Minimal) */}
-        <div style={s.compactDock}>
+        {/* Sleek Small Circular Control Buttons (Play/Pause Circle + Red Alert Circle) */}
+        <div style={s.circleDock}>
+          {/* Circular Play / Pause Toggle Button */}
           <button
             style={{
-              ...s.smallBtn,
-              background: isMoving || driverStatus === 'emergency' || driverStatus === 'delivered'
-                ? 'rgba(30,41,59,0.6)'
+              ...s.circleFab,
+              background: isMoving || driverStatus === 'emergency'
+                ? 'linear-gradient(135deg, #f59e0b, #d97706)'
                 : isAtFacility
-                ? 'linear-gradient(135deg,#10b981,#059669)'
-                : 'linear-gradient(135deg,#22c55e,#15803d)',
-              opacity: isMoving || driverStatus === 'emergency' || driverStatus === 'delivered' ? 0.45 : 1,
-              boxShadow: isAtFacility ? '0 0 10px rgba(16,185,129,0.5)' : '0 2px 6px rgba(0,0,0,0.25)',
+                ? 'linear-gradient(135deg, #10b981, #059669)'
+                : 'linear-gradient(135deg, #22c55e, #16a34a)',
+              boxShadow: isMoving
+                ? '0 4px 18px rgba(245,158,11,0.5)'
+                : '0 4px 18px rgba(34,197,94,0.5)',
+              opacity: driverStatus === 'delivered' ? 0.45 : 1,
             }}
-            onClick={handleStart}
-            disabled={isMoving || driverStatus === 'emergency' || driverStatus === 'delivered' || loading}
+            onClick={isMoving || driverStatus === 'emergency' ? handleStop : handleStart}
+            disabled={driverStatus === 'delivered' || loading}
+            title={isMoving ? 'Pause Simulation' : isAtFacility ? 'Resume Simulation' : 'Start Simulation'}
           >
-            <span>▶</span> <span>{isAtFacility ? 'Resume' : 'Start'}</span>
+            {loading ? (
+              <div style={s.miniSpinner} />
+            ) : isMoving || driverStatus === 'emergency' ? (
+              <span style={{ fontSize: 20, color: '#ffffff', lineHeight: 1 }}>⏸</span>
+            ) : (
+              <span style={{ fontSize: 20, color: '#ffffff', lineHeight: 1, marginLeft: 3 }}>▶</span>
+            )}
           </button>
 
+          {/* Red Circular Button for Temperature Excursion Spike */}
           <button
             style={{
-              ...s.smallBtn,
-              background: !isMoving && !isEmergency
-                ? 'rgba(30,41,59,0.7)'
-                : 'linear-gradient(135deg,#64748b,#475569)',
-              opacity: !isMoving && !isEmergency ? 0.5 : 1,
-            }}
-            onClick={handleStop}
-            disabled={!isMoving && !isEmergency}
-          >
-            <span>⏸</span> <span>Stop</span>
-          </button>
-
-          <button
-            style={{
-              ...s.smallBtn,
-              background: 'linear-gradient(135deg,#ef4444,#b91c1c)',
-              opacity: loading ? 0.7 : 1,
+              ...s.circleFab,
+              background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+              boxShadow: '0 4px 18px rgba(239,68,68,0.55)',
+              animation: tempPulse ? 'cgPulse 0.5s ease' : 'none',
+              opacity: loading ? 0.65 : 1,
             }}
             onClick={handleIncreaseTemp}
             disabled={loading}
+            title="Simulate Temperature Excursion (Spike Temp)"
           >
-            <span>🔥</span> <span>Temp+</span>
+            <span style={{ fontSize: 20, color: '#ffffff', lineHeight: 1 }}>🔥</span>
           </button>
         </div>
 
@@ -1220,36 +1229,28 @@ const s: Record<string, any> = {
     borderTop: '2px solid #fff',
     animation: 'cgSpin .7s linear infinite',
   },
-  compactDock: {
+  circleDock: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    background: 'rgba(15,23,42,0.9)',
-    backdropFilter: 'blur(12px)',
-    padding: '4px 6px',
-    borderRadius: 18,
-    border: '1px solid rgba(51,65,85,0.7)',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+    gap: 16,
+    background: 'rgba(15,23,42,0.85)',
+    backdropFilter: 'blur(16px)',
+    padding: '8px 18px',
+    borderRadius: 36,
+    border: '1px solid rgba(255,255,255,0.15)',
+    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     margin: '0 auto',
-    width: '100%',
-    maxWidth: 270,
   },
-  smallBtn: {
-    flex: 1,
-    height: 30,
-    padding: '0 8px',
-    borderRadius: 13,
-    border: 'none',
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: 700,
+  circleFab: {
+    width: 48,
+    height: 48,
+    borderRadius: '50%',
+    border: '2.5px solid rgba(255,255,255,0.9)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
     cursor: 'pointer',
-    boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
     transition: 'all 0.15s ease',
   },
   deliverBtn: {
