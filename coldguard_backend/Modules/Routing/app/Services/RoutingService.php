@@ -24,7 +24,8 @@ class RoutingService
     public function getLiveLocation(Shipment $shipment): array
     {
         $latestTelemetry = Telemetry::where('shipment_id', $shipment->id)
-            ->latest('recorded_at')
+            ->where('recorded_at', '<=', now()->addSeconds(5))
+            ->orderBy('id', 'desc')
             ->first();
 
         if (!$latestTelemetry || is_null($latestTelemetry->latitude) || is_null($latestTelemetry->longitude)) {
@@ -59,7 +60,8 @@ class RoutingService
     {
         // 1. Fetch latest telemetry for current truck GPS coordinates, with fallback to shipment coordinates
         $latestTelemetry = Telemetry::where('shipment_id', $shipment->id)
-            ->latest('recorded_at')
+            ->where('recorded_at', '<=', now()->addSeconds(5))
+            ->orderBy('id', 'desc')
             ->first();
 
         $truckLat = $overrideLat ?? ($latestTelemetry?->latitude !== null ? (float) $latestTelemetry->latitude : ($shipment->current_lat !== null ? (float) $shipment->current_lat : ($shipment->origin_lat !== null ? (float) $shipment->origin_lat : null)));

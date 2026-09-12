@@ -30,7 +30,8 @@ class FacilityService
     {
         // 1. Fetch latest telemetry for current truck GPS location, with fallback to shipment coordinates
         $latestTelemetry = Telemetry::where('shipment_id', $shipment->id)
-            ->latest('recorded_at')
+            ->where('recorded_at', '<=', now()->addSeconds(5))
+            ->orderBy('id', 'desc')
             ->first();
 
         $truckLat = $overrideLat ?? ($latestTelemetry?->latitude !== null ? (float) $latestTelemetry->latitude : ($shipment->current_lat !== null ? (float) $shipment->current_lat : ($shipment->origin_lat !== null ? (float) $shipment->origin_lat : null)));

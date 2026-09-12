@@ -1065,10 +1065,12 @@ export default function ManagerDashboard() {
                                   ? 'bg-rose-100 text-rose-800 animate-pulse'
                                   : s.status === 'IN_TRANSIT'
                                   ? 'bg-blue-100 text-blue-800'
+                                  : s.status === 'REROUTED'
+                                  ? 'bg-purple-100 text-purple-800 border border-purple-200'
                                   : 'bg-amber-100 text-amber-800'
                               }`}
                             >
-                              {s.status === 'IN_TRANSIT' ? 'In Transit' : s.status}
+                              {s.status === 'IN_TRANSIT' ? 'In Transit' : s.status === 'REROUTED' ? 'Rerouted' : s.status}
                             </span>
                           </div>
                           <div className="text-[10px] font-mono text-slate-400">

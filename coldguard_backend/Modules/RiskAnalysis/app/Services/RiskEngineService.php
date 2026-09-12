@@ -14,16 +14,17 @@ class RiskEngineService
      */
     public function evaluateRisk(Shipment $shipment): RiskEvent
     {
-        // 1. Fetch recent telemetry readings (up to 10 latest)
+        // 1. Fetch recent telemetry readings up to current moment
         $readings = Telemetry::where('shipment_id', $shipment->id)
-            ->orderBy('recorded_at', 'desc')
+            ->where('recorded_at', '<=', now()->addSeconds(5))
+            ->orderBy('id', 'desc')
             ->limit(10)
             ->get()
             ->reverse()
             ->values();
 
-        $minTemp = $shipment->min_temp;
-        $maxTemp = $shipment->max_temp;
+        $minTemp = (float) ($shipment->min_temp ?? 2.0);
+        $maxTemp = (float) ($shipment->max_temp ?? 8.0);
 
         // Default if no telemetry exists yet
         if ($readings->isEmpty()) {
@@ -38,9 +39,10 @@ class RiskEngineService
         }
 
         $latest = $readings->last();
-        $currentTemp = $latest->temperature;
-        $battery = $latest->battery;
-        $humidity = $latest->humidity;
+        // The authoritative current temperature is shipment's current_temp or latest reading
+        $currentTemp = !is_null($shipment->current_temp) ? (float) $shipment->current_temp : (float) $latest->temperature;
+        $battery = (float) $latest->battery;
+        $humidity = (float) $latest->humidity;
 
         // 2. Compute Temperature Slope (dT/dt in °C per minute)
         $slopePerMin = 0.0;
@@ -53,16 +55,18 @@ class RiskEngineService
 
         // 3. Evaluate Risk Scenarios
 
-        // SCENARIO A: Already Breached (CRITICAL)
+        // SCENARIO A: Already Breached (Excursion beyond limits)
         if ($currentTemp > $maxTemp || $currentTemp < $minTemp) {
             $breachType = $currentTemp > $maxTemp ? "exceeded maximum threshold ({$maxTemp}°C)" : "dropped below minimum threshold ({$minTemp}°C)";
-            $riskScore = 98.0;
-            $severity = 'CRITICAL';
+            // Differentiate CRITICAL (> max + 1.5°C or < min - 1.5°C) from WARNING
+            $isCritical = ($currentTemp > ($maxTemp + 1.5) || $currentTemp < ($minTemp - 1.5));
+            $riskScore = $isCritical ? 98.0 : 85.0;
+            $severity = $isCritical ? 'CRITICAL' : 'WARNING';
             $predictedFailureMins = 0;
-            $reason = "CRITICAL TEMPERATURE BREACH: Current temperature ({$currentTemp}°C) has {$breachType}.";
+            $reason = ($isCritical ? "CRITICAL" : "HIGH") . " TEMPERATURE BREACH: Current temperature ({$currentTemp}°C) has {$breachType}.";
             $recommendation = "IMMEDIATE INTERVENTION REQUIRED: Cold-chain integrity is compromised. Reroute to nearest cold-storage facility immediately.";
 
-            $shipment->update(['status' => 'CRITICAL']);
+            $shipment->update(['status' => $severity]);
         }
         // SCENARIO B: Rising Temperature approaching Max Limit (HIGH Risk)
         elseif ($slopePerMin > 0 && ($maxTemp - $currentTemp) <= 1.8) {
@@ -99,8 +103,16 @@ class RiskEngineService
             $reason = "SAFE: Cold-chain temperature is stable ({$currentTemp}°C within required {$minTemp}°C–{$maxTemp}°C range).";
             $recommendation = "Continue standard transit route.";
 
-            if (in_array($shipment->status, ['CREATED', 'WARNING'])) {
-                $shipment->update(['status' => 'IN_TRANSIT']);
+            // If temperature is within safe range, de-escalate from WARNING or CRITICAL
+            if (in_array($shipment->status, ['CREATED', 'WARNING', 'CRITICAL'])) {
+                $hasActiveDiversion = \Modules\Intervention\App\Models\Intervention::where('shipment_id', $shipment->id)
+                    ->whereIn('status', ['ACTIVE', 'DIVERTED', 'FACILITY_SELECTED'])
+                    ->whereNotNull('facility_id')
+                    ->exists();
+
+                $shipment->update([
+                    'status' => $hasActiveDiversion ? 'REROUTED' : 'IN_TRANSIT'
+                ]);
             }
         }
 

@@ -36,6 +36,11 @@ class TelemetryController extends Controller
             'recorded_at' => 'nullable|date',
         ]);
 
+        $recTime = !empty($validated['recorded_at']) ? Carbon::parse($validated['recorded_at']) : Carbon::now();
+        if ($recTime->isFuture()) {
+            $recTime = Carbon::now();
+        }
+
         $telemetry = Telemetry::create([
             'shipment_id' => $shipment->id,
             'temperature' => $validated['temperature'],
@@ -43,7 +48,7 @@ class TelemetryController extends Controller
             'battery' => $validated['battery'],
             'latitude' => $validated['latitude'],
             'longitude' => $validated['longitude'],
-            'recorded_at' => !empty($validated['recorded_at']) ? Carbon::parse($validated['recorded_at']) : Carbon::now(),
+            'recorded_at' => $recTime,
             'is_anomaly' => ($validated['temperature'] < $shipment->min_temp || $validated['temperature'] > $shipment->max_temp),
         ]);
 
@@ -136,7 +141,7 @@ class TelemetryController extends Controller
         }
 
         $latest = Telemetry::where('shipment_id', $shipment->id)
-            ->orderBy('recorded_at', 'desc')
+            ->where('recorded_at', '<=', now()->addSeconds(5))
             ->orderBy('id', 'desc')
             ->first();
 
@@ -223,7 +228,7 @@ class TelemetryController extends Controller
 
             $humidity = round($baseHumidity - ($i * 0.5) + (rand(-10, 10) / 10), 2);
             $battery = round($baseBattery - ($i * 0.8), 2);
-            $recordedAt = (clone $now)->addMinutes($i * 3);
+            $recordedAt = (clone $now)->subMinutes(($steps - 1 - $i) * 2);
 
             $telemetry = Telemetry::create([
                 'shipment_id' => $shipment->id,
