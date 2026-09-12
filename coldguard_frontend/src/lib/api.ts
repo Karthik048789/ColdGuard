@@ -1,4 +1,4 @@
-﻿const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://coldguard-backend.onrender.com/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://coldguard-backend.onrender.com/api';
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -32,11 +32,11 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
   };
 
   if (token) {
-    headers['Authorization'] = Bearer ;
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : /;
-  const response = await fetch(${API_BASE_URL}, {
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const response = await fetch(`${API_BASE_URL}${cleanEndpoint}`, {
     ...options,
     headers,
   });
@@ -44,7 +44,7 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(data?.message || API request failed with status );
+    throw new Error(data?.message || `API request failed with status ${response.status}`);
   }
 
   return data as T;
