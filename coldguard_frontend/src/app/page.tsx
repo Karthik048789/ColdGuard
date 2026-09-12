@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { apiFetch, getAuthUser, clearAuthSession } from '@/lib/api';
 
 export default function HomePage() {
@@ -135,26 +134,14 @@ export default function HomePage() {
 
       {/* Main Hero Section */}
       <main className="relative flex-1 w-full overflow-hidden">
-        {/* Background Map & Graphic Overlay */}
-        <div className="absolute top-0 right-0 w-full lg:w-[65%] h-[550px] sm:h-[650px] z-0 pointer-events-none select-none opacity-90">
-          <div className="relative w-full h-full">
-            <Image
-              src="/hero-truck.jpg"
-              alt="Cold Chain Logistics Truck"
-              fill
-              priority
-              className="object-cover object-right-bottom sm:object-contain sm:object-right"
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-white via-white/50 to-transparent w-full sm:w-[60%]" />
-            <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-white to-transparent" />
-          </div>
-        </div>
+        {/* Subtle Background Glow */}
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-blue-500/5 blur-[120px] rounded-full pointer-events-none" />
 
         {/* Content Container */}
-        <div className="relative z-10 max-w-7xl mx-auto px-6 sm:px-10 pt-8 sm:pt-16 pb-20">
-          <div className="max-w-xl">
+        <div className="relative z-10 max-w-7xl mx-auto px-6 sm:px-10 pt-12 sm:pt-20 pb-20">
+          <div className="max-w-3xl">
             {/* Category Tag */}
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-4">
               <span className="text-xs font-black tracking-[0.2em] text-slate-400 uppercase">
                 COLD CHAIN LOGISTICS
               </span>
@@ -172,7 +159,7 @@ export default function HomePage() {
             </h1>
 
             {/* Subtitle Description */}
-            <p className="mt-6 text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-lg">
+            <p className="mt-6 text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-xl">
               Reliable truck transport for temperature-sensitive medicines and vaccines, with real-time tracking and intelligent logistics &mdash; across the country.
             </p>
 
@@ -247,14 +234,6 @@ export default function HomePage() {
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Floating Quote */}
-        <div className="hidden lg:block absolute bottom-8 right-12 z-20 pointer-events-none text-right">
-          <p className="text-xs italic text-slate-400 tracking-wide">
-            &ldquo;Every dose matters.<br />
-            <span className="text-slate-600 font-semibold">We move what keeps lives going.</span>&rdquo;
-          </p>
         </div>
       </main>
 
