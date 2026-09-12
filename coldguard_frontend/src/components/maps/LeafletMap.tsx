@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import 'leaflet/dist/leaflet.css';
 
 interface MapMarker {
   lat: number;
@@ -75,6 +76,18 @@ export default function LeafletMap({
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 18,
       }).addTo(map);
+
+      // Force full tile rasterization immediately after mount and on next tick
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.invalidateSize({ pan: false });
+        }
+      }, 100);
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.invalidateSize({ pan: false });
+        }
+      }, 400);
 
       const layerGroup = L.layerGroup().addTo(map);
       layerGroupRef.current = layerGroup;
@@ -282,5 +295,5 @@ export default function LeafletMap({
     }
   }, [markers, routeCoordinates, routeColor]);
 
-  return <div ref={containerRef} className={className} />;
+  return <div ref={containerRef} className={`${className} relative z-10`} style={{ width: '100%', height: '100%', minHeight: '100%' }} />;
 }
