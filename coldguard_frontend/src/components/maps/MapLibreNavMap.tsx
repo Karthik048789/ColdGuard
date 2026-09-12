@@ -170,6 +170,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
   // Animation & simulation refs
   const animIdRef = useRef<number | null>(null);
   const routeIndexRef = useRef<number>(0);
+  const isTransitioningRef = useRef<boolean>(false);
   const currentBearingRef = useRef<number>(0);
   const routeCoordsRef = useRef<[number, number][]>(routeCoordinates);
   routeCoordsRef.current = routeCoordinates;
@@ -632,13 +633,19 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
     if (!isNavigating) {
       if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
       setCurrentSpeed(0);
-      setCameraMode('overview');
+      isTransitioningRef.current = false;
 
       // Preserve stopped position and inform parent of exact halt coordinate
       const coords = routeCoordsRef.current;
-      const idx = Math.floor(routeIndexRef.current);
-      if (coords && coords[idx] && onLocationUpdateRef.current) {
-        onLocationUpdateRef.current(coords[idx][0], coords[idx][1], 0);
+      const idx = routeIndexRef.current;
+      const iFloor = Math.floor(idx);
+      const curPt = coords && coords[iFloor] ? coords[iFloor] : null;
+      if (curPt && mapRef.current) {
+        // Keep camera steady at exact stop coordinate without resetting view
+        mapRef.current.jumpTo({ center: curPt });
+      }
+      if (curPt && onLocationUpdateRef.current) {
+        onLocationUpdateRef.current(curPt[0], curPt[1], 0);
       }
       return;
     }
@@ -648,11 +655,32 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
     const map = mapRef.current;
     if (!map) return;
 
+    const coords = routeCoordsRef.current;
+    const idx = Math.floor(routeIndexRef.current);
+    const curPt = coords && coords[idx] ? coords[idx] : originCoord || [73.856, 15.4647];
+    const initialBearing = currentBearingRef.current || 0;
+
+    // Ensure 3D road-aligned chevron marker
+    if (puckMarkerRef.current) {
+      puckMarkerRef.current.setPitchAlignment('map');
+      puckMarkerRef.current.setRotationAlignment('map');
+      puckMarkerRef.current.setRotation(initialBearing);
+      puckMarkerRef.current.setLngLat(curPt);
+    }
+
+    // Google Maps Style 3D Navigation Zoom fly-to directly into vehicle!
+    isTransitioningRef.current = true;
     map.easeTo({
-      pitch: 56,
-      zoom: 16.2,
-      duration: 600,
+      center: curPt,
+      zoom: 16.8,
+      pitch: 58,
+      bearing: initialBearing,
+      duration: 1000,
     });
+
+    const easeTimer = setTimeout(() => {
+      isTransitioningRef.current = false;
+    }, 1050);
 
     let lastTime = performance.now();
     let lastThrottledUpdate = 0;
@@ -721,7 +749,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
           puckMarkerRef.current.setRotation(currentBearingRef.current);
         }
 
-        if (cameraModeRef.current === 'drive') {
+        if (!isTransitioningRef.current && cameraModeRef.current === 'drive') {
           map.jumpTo({
             center: [lng, lat],
             bearing: currentBearingRef.current,
@@ -780,6 +808,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
     animIdRef.current = requestAnimationFrame(tick);
 
     return () => {
+      clearTimeout(easeTimer);
       if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
     };
   }, [isNavigating, isEmergency, destinationName, facilityName, onArrival, onLocationUpdate]);

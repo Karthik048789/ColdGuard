@@ -55,22 +55,22 @@ class RoutingService
     /**
      * Calculate multi-waypoint road route (Truck -> Emergency Facility -> Receiver).
      */
-    public function calculateRoute(Shipment $shipment, ?int $facilityId = null, bool $direct = false): array
+    public function calculateRoute(Shipment $shipment, ?int $facilityId = null, bool $direct = false, ?float $overrideLat = null, ?float $overrideLng = null): array
     {
-        // 1. Fetch latest telemetry for current truck GPS coordinates
+        // 1. Fetch latest telemetry for current truck GPS coordinates, with fallback to shipment coordinates
         $latestTelemetry = Telemetry::where('shipment_id', $shipment->id)
             ->latest('recorded_at')
             ->first();
 
-        if (!$latestTelemetry || is_null($latestTelemetry->latitude) || is_null($latestTelemetry->longitude)) {
+        $truckLat = $overrideLat ?? ($latestTelemetry?->latitude !== null ? (float) $latestTelemetry->latitude : ($shipment->current_lat !== null ? (float) $shipment->current_lat : ($shipment->origin_lat !== null ? (float) $shipment->origin_lat : null)));
+        $truckLng = $overrideLng ?? ($latestTelemetry?->longitude !== null ? (float) $latestTelemetry->longitude : ($shipment->current_lng !== null ? (float) $shipment->current_lng : ($shipment->origin_lng !== null ? (float) $shipment->origin_lng : null)));
+
+        if (is_null($truckLat) || is_null($truckLng)) {
             return [
                 'success' => false,
                 'message' => 'Current shipment location is unavailable. Telemetry coordinates missing.',
             ];
         }
-
-        $truckLat = (float) $latestTelemetry->latitude;
-        $truckLng = (float) $latestTelemetry->longitude;
 
         // 2. Validate shipment destination coordinates
         if (is_null($shipment->destination_lat) || is_null($shipment->destination_lng)) {
@@ -176,7 +176,7 @@ class RoutingService
                 'current_location' => [
                     'latitude' => $truckLat,
                     'longitude' => $truckLng,
-                    'recorded_at' => $latestTelemetry->recorded_at->toIso8601String(),
+                    'recorded_at' => $latestTelemetry?->recorded_at ? $latestTelemetry->recorded_at->toIso8601String() : now()->toIso8601String(),
                 ],
                 'facility' => $facilityData,
                 'destination' => [

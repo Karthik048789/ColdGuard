@@ -26,23 +26,23 @@ class FacilityService
     /**
      * Find and rank eligible cold-storage facilities for a given shipment.
      */
-    public function getEligibleFacilitiesForShipment(Shipment $shipment): array
+    public function getEligibleFacilitiesForShipment(Shipment $shipment, ?float $overrideLat = null, ?float $overrideLng = null): array
     {
-        // 1. Fetch latest telemetry for current truck GPS location
+        // 1. Fetch latest telemetry for current truck GPS location, with fallback to shipment coordinates
         $latestTelemetry = Telemetry::where('shipment_id', $shipment->id)
             ->latest('recorded_at')
             ->first();
 
-        if (!$latestTelemetry || is_null($latestTelemetry->latitude) || is_null($latestTelemetry->longitude)) {
+        $truckLat = $overrideLat ?? ($latestTelemetry?->latitude !== null ? (float) $latestTelemetry->latitude : ($shipment->current_lat !== null ? (float) $shipment->current_lat : ($shipment->origin_lat !== null ? (float) $shipment->origin_lat : null)));
+        $truckLng = $overrideLng ?? ($latestTelemetry?->longitude !== null ? (float) $latestTelemetry->longitude : ($shipment->current_lng !== null ? (float) $shipment->current_lng : ($shipment->origin_lng !== null ? (float) $shipment->origin_lng : null)));
+
+        if (is_null($truckLat) || is_null($truckLng)) {
             return [
                 'success' => false,
                 'message' => 'Current shipment location is unavailable. Telemetry coordinates missing.',
                 'data' => null
             ];
         }
-
-        $truckLat = (float) $latestTelemetry->latitude;
-        $truckLng = (float) $latestTelemetry->longitude;
 
         $shipmentMinTemp = (float) $shipment->min_temp;
         $shipmentMaxTemp = (float) $shipment->max_temp;
@@ -136,7 +136,7 @@ class FacilityService
                 'current_location' => [
                     'latitude' => $truckLat,
                     'longitude' => $truckLng,
-                    'last_updated_at' => $latestTelemetry->recorded_at->toIso8601String(),
+                    'last_updated_at' => $latestTelemetry?->recorded_at ? $latestTelemetry->recorded_at->toIso8601String() : now()->toIso8601String(),
                 ],
                 'facilities' => $sortedCandidates->toArray(),
                 'recommended_facility' => $recommendedFacility,

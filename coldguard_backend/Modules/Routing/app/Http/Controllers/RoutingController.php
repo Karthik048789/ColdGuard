@@ -67,7 +67,9 @@ class RoutingController extends Controller
             : null;
         $direct = $request->boolean('direct') || $request->query('facility_id') === 'none' || $request->query('facility_id') === '0';
 
-        $result = $this->routingService->calculateRoute($shipment, $facilityId, $direct);
+        $overrideLat = $request->has('lat') ? (float) $request->query('lat') : null;
+        $overrideLng = $request->has('lng') ? (float) $request->query('lng') : null;
+        $result = $this->routingService->calculateRoute($shipment, $facilityId, $direct, $overrideLat, $overrideLng);
 
         if (!$result['success']) {
             return response()->json([

@@ -66,6 +66,38 @@ const PRESET_DRIVERS: PresetDriver[] = [
   },
 ];
 
+// Geodesic distance calculation between two GPS coordinates
+function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function findNearestFacility(curLat: number, curLng: number, facList: any[]): any {
+  if (!facList || facList.length === 0) return null;
+  let best: any = null;
+  let minDist = Infinity;
+  for (const f of facList) {
+    const fLat = Number(f.latitude);
+    const fLng = Number(f.longitude);
+    if (!fLat || !fLng) continue;
+    const dist = calculateDistanceKm(curLat, curLng, fLat, fLng);
+    if (dist < minDist) {
+      minDist = dist;
+      best = { ...f, approximate_distance_km: parseFloat(dist.toFixed(1)) };
+    }
+  }
+  return best;
+}
+
 export default function DriverPage() {
   const [token, setToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -161,13 +193,25 @@ export default function DriverPage() {
   shipmentDataRef.current = shipment;
 
   // Route & Steps Fetcher with guaranteed direct OSRM fallback (100% stable reference to stop loop)
-  const fetchRouteData = useCallback(async (tk: string, sid: number, facilityId?: number, direct?: boolean, fallbackShip?: any) => {
+  const fetchRouteData = useCallback(async (
+    tk: string,
+    sid: number,
+    facilityId?: number,
+    direct?: boolean,
+    fallbackShip?: any,
+    targetFacility?: any
+  ) => {
     try {
-      let url = `${API}/shipments/${sid}/route`;
+      // Determine origin coordinate: prefer real-time location of truck
+      const s = fallbackShip || shipmentDataRef.current;
+      const curLat = telemetryRef.current?.latitude ?? telemetry?.latitude ?? s?.current_lat ?? s?.origin_lat ?? 15.4647;
+      const curLng = telemetryRef.current?.longitude ?? telemetry?.longitude ?? s?.current_lng ?? s?.origin_lng ?? 73.8560;
+
+      let url = `${API}/shipments/${sid}/route?lat=${curLat}&lng=${curLng}`;
       if (facilityId) {
-        url += `?facility_id=${facilityId}`;
+        url += `&facility_id=${facilityId}`;
       } else if (direct) {
-        url += `?direct=true`;
+        url += `&direct=true`;
       }
       const r = await fetch(url, { headers: { Authorization: `Bearer ${tk}` } });
       const d = await r.json();
@@ -186,11 +230,14 @@ export default function DriverPage() {
       }
 
       // Direct OSRM engine fallback if backend route had no geometry or failed
-      const s = fallbackShip || shipmentDataRef.current;
-      const startLng = Number(s?.current_lng || s?.origin_lng);
-      const startLat = Number(s?.current_lat || s?.origin_lat);
-      const endLng = Number(s?.destination_lng);
-      const endLat = Number(s?.destination_lat);
+      const startLng = curLng;
+      const startLat = curLat;
+      const endLng = targetFacility
+        ? Number(targetFacility.longitude)
+        : Number(s?.destination_lng);
+      const endLat = targetFacility
+        ? Number(targetFacility.latitude)
+        : Number(s?.destination_lat);
 
       if (startLng && startLat && endLng && endLat) {
         const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
@@ -214,7 +261,7 @@ export default function DriverPage() {
     } catch (e) {
       console.error('Failed to fetch OSRM route:', e);
     }
-  }, []);
+  }, [telemetry?.latitude, telemetry?.longitude]);
 
   // Fetch active shipment assigned to this driver
   useEffect(() => {
@@ -383,11 +430,13 @@ export default function DriverPage() {
         await fetchRouteData(token, shipmentId, undefined, true);
         const destName = shipment?.destination_name?.split(',')[0] || 'destination';
         setActionMsg(`Resuming transit towards ${destName}...`);
+        setDriverStatus('moving');
       } else {
         if (routeCoordinates.length < 2) {
           await fetchRouteData(token, shipmentId);
         }
         setActionMsg('Cruising at ~60 km/h along highway...');
+        setDriverStatus(emergencyFacility ? 'emergency' : 'moving');
       }
 
       if (shipment?.status === 'CREATED') {
@@ -396,7 +445,6 @@ export default function DriverPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
-      setDriverStatus('moving');
     } finally {
       setLoading(false);
     }
@@ -404,12 +452,12 @@ export default function DriverPage() {
 
   const handleStop = async () => {
     setDriverStatus('idle');
-    setActionMsg('Vehicle stopped. Position saved in database.');
+    setActionMsg('Vehicle paused. Tap play to resume.');
 
     const tk = tokenRef.current;
     const sid = shipmentIdRef.current;
-    const curLat = telemetry?.latitude ?? shipment?.current_lat ?? shipment?.origin_lat;
-    const curLng = telemetry?.longitude ?? shipment?.current_lng ?? shipment?.origin_lng;
+    const curLat = telemetryRef.current?.latitude ?? telemetry?.latitude ?? shipment?.current_lat ?? shipment?.origin_lat;
+    const curLng = telemetryRef.current?.longitude ?? telemetry?.longitude ?? shipment?.current_lng ?? shipment?.origin_lng;
 
     if (tk && sid && curLat && curLng) {
       try {
@@ -417,7 +465,7 @@ export default function DriverPage() {
           method: 'POST',
           headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            temperature: telemetry?.temperature ?? 4.0,
+            temperature: telemetryRef.current?.temperature ?? telemetry?.temperature ?? 4.0,
             humidity: telemetry?.humidity ?? 62.0,
             battery: telemetry?.battery ?? 89.0,
             latitude: curLat,
@@ -437,14 +485,17 @@ export default function DriverPage() {
     setTimeout(() => setTempPulse(false), 800);
 
     try {
-      // 1. Progressively increase container temperature (+2.2°C to +3.5°C each click)
-      const curTemp = telemetry?.temperature ?? shipment?.current_temp ?? 6.2;
-      const newSpikeTemp = parseFloat((curTemp + 2.2 + Math.random() * 0.8).toFixed(2));
+      // 1. Spikes temperature into critical cold-chain excursion (>8.5°C)
+      const curTemp = telemetryRef.current?.temperature ?? telemetry?.temperature ?? shipment?.current_temp ?? 5.5;
+      const newSpikeTemp = curTemp < 8.0
+        ? parseFloat((9.2 + Math.random() * 0.8).toFixed(2))
+        : parseFloat((curTemp + 2.5 + Math.random() * 0.8).toFixed(2));
+
+      // Get real-time truck coordinate
+      const curLat = telemetryRef.current?.latitude ?? telemetry?.latitude ?? shipment?.origin_lat ?? 15.4647;
+      const curLng = telemetryRef.current?.longitude ?? telemetry?.longitude ?? shipment?.origin_lng ?? 73.8560;
 
       // Post real telemetry reading to backend database (/api/shipments/{id}/telemetry)
-      const curLat = telemetry?.latitude ?? shipment?.origin_lat ?? 15.4647;
-      const curLng = telemetry?.longitude ?? shipment?.origin_lng ?? 73.8560;
-
       await fetch(`${API}/shipments/${shipmentId}/telemetry`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -477,13 +528,26 @@ export default function DriverPage() {
         latitude: curLat,
         longitude: curLng,
       }));
+      if (telemetryRef.current) {
+        telemetryRef.current.temperature = newSpikeTemp;
+        telemetryRef.current.latitude = curLat;
+        telemetryRef.current.longitude = curLng;
+      }
 
       // 2. Fetch nearest eligible cold-storage facility (/api/shipments/{id}/facilities/eligible)
-      const facRes = await fetch(`${API}/shipments/${shipmentId}/facilities/eligible`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const facData = await facRes.json();
-      const nearest = facData.data?.recommended_facility || facData.data?.facilities?.[0];
+      let nearest: any = null;
+      try {
+        const facRes = await fetch(`${API}/shipments/${shipmentId}/facilities/eligible?lat=${curLat}&lng=${curLng}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const facData = await facRes.json();
+        nearest = facData.data?.recommended_facility || facData.data?.facilities?.[0];
+      } catch {}
+
+      // Robust fallback: Geodesic Haversine search across Goa facilities list
+      if (!nearest) {
+        nearest = findNearestFacility(curLat, curLng, facilities);
+      }
 
       if (nearest) {
         setEmergencyFacility(nearest);
@@ -491,13 +555,12 @@ export default function DriverPage() {
         const facShortName = nearest.name.split(',')[0];
         setActionMsg(`⚠️ Temp breach: ${newSpikeTemp}°C! Rerouting to ${facShortName}...`);
 
-        // 3. Recalculate road route to this nearby facility
-        await fetchRouteData(token, shipmentId, nearest.id);
+        // 3. Recalculate road route from current position to this nearby facility
+        await fetchRouteData(token, shipmentId, nearest.id, false, undefined, nearest);
 
         // 4. Start navigating towards facility!
         setDriverStatus('emergency');
       } else {
-        // No nearby facility found or available: "facility not there jut move nothing we can do"
         setEmergencyFacility(null);
         setDriverStatus('moving');
         const destShort = (shipment?.destination_name || 'destination').split(',')[0];

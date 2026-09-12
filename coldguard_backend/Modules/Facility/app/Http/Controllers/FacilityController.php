@@ -36,7 +36,7 @@ class FacilityController extends Controller
      * GET /api/shipments/{id}/facilities/eligible
      * Retrieve eligible cold-storage facilities ranked by approximate distance for a shipment.
      */
-    public function eligible(int $id): JsonResponse
+    public function eligible(Request $request, int $id): JsonResponse
     {
         $shipment = Shipment::find($id);
 
@@ -47,7 +47,9 @@ class FacilityController extends Controller
             ], 404);
         }
 
-        $result = $this->facilityService->getEligibleFacilitiesForShipment($shipment);
+        $overrideLat = $request->has('lat') ? (float) $request->query('lat') : null;
+        $overrideLng = $request->has('lng') ? (float) $request->query('lng') : null;
+        $result = $this->facilityService->getEligibleFacilitiesForShipment($shipment, $overrideLat, $overrideLng);
 
         if (!$result['success']) {
             return response()->json([
