@@ -23,6 +23,15 @@ class RoutingController extends Controller
      */
     public function location(int $id): JsonResponse
     {
+        // 1. Instant Cache Hit (<5ms) without waiting on remote PostgreSQL Singapore connection
+        $cached = \Illuminate\Support\Facades\Cache::get("shipment_live_{$id}");
+        if ($cached && is_array($cached)) {
+            return response()->json([
+                'success' => true,
+                'data' => $cached
+            ], 200);
+        }
+
         $shipment = Shipment::find($id);
 
         if (!$shipment) {
@@ -49,10 +58,16 @@ class RoutingController extends Controller
 
     /**
      * GET /api/shipments/{id}/route
-     * Calculate multi-waypoint road route (Truck -> Emergency Facility -> Receiver) via OSRM.
+     * Calculate multi-waypoint road route (Origin/Truck -> Emergency Facility -> Receiver) via OSRM.
      */
     public function route(Request $request, int $id): JsonResponse
     {
+        $cacheKey = "route_resp_{$id}_" . md5((string) $request->getQueryString());
+        $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        if ($cached && is_array($cached)) {
+            return response()->json($cached, 200);
+        }
+
         $shipment = Shipment::find($id);
 
         if (!$shipment) {
@@ -69,7 +84,8 @@ class RoutingController extends Controller
 
         $overrideLat = $request->has('lat') ? (float) $request->query('lat') : null;
         $overrideLng = $request->has('lng') ? (float) $request->query('lng') : null;
-        $result = $this->routingService->calculateRoute($shipment, $facilityId, $direct, $overrideLat, $overrideLng);
+        $fromOrigin = $request->boolean('from_origin') || ($overrideLat === null && $overrideLng === null);
+        $result = $this->routingService->calculateRoute($shipment, $facilityId, $direct, $overrideLat, $overrideLng, $fromOrigin);
 
         if (!$result['success']) {
             return response()->json([
@@ -78,10 +94,14 @@ class RoutingController extends Controller
             ], 400);
         }
 
-        return response()->json([
+        $responsePayload = [
             'success' => true,
             'message' => $result['message'],
             'data' => $result['data']
-        ], 200);
+        ];
+
+        \Illuminate\Support\Facades\Cache::put($cacheKey, $responsePayload, 1800);
+
+        return response()->json($responsePayload, 200);
     }
 }

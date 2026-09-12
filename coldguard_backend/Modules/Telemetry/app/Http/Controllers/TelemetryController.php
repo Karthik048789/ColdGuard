@@ -68,6 +68,24 @@ class TelemetryController extends Controller
         $interventionService = app(\Modules\Intervention\App\Services\InterventionService::class);
         $interventionResult = $interventionService->processRiskEvent($shipment, $riskEvent);
 
+        // Cache live tracking payload for sub-10ms response time on tracking polls
+        \Illuminate\Support\Facades\Cache::put("shipment_live_{$shipment->id}", [
+            'shipment_id' => $shipment->id,
+            'tracking_number' => $shipment->tracking_number,
+            'product_name' => $shipment->product_name,
+            'location' => [
+                'latitude' => (float) $validated['latitude'],
+                'longitude' => (float) $validated['longitude'],
+            ],
+            'latitude' => (float) $validated['latitude'],
+            'longitude' => (float) $validated['longitude'],
+            'temperature' => (float) $validated['temperature'],
+            'humidity' => (float) $validated['humidity'],
+            'battery' => (float) $validated['battery'],
+            'status' => $shipment->status,
+            'recorded_at' => $recTime->toIso8601String(),
+        ], 120);
+
         return response()->json([
             'success' => true,
             'message' => 'Telemetry recorded successfully',

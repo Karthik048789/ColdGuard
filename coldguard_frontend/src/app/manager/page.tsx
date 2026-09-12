@@ -268,7 +268,7 @@ export default function ManagerDashboard() {
     setRouteLoading(true);
     try {
       // 1. Attempt backend routing endpoint
-      const res = await apiFetch<any>(`/shipments/${shipment.id}/route`).catch(() => null);
+      const res = await apiFetch<any>(`/shipments/${shipment.id}/route?from_origin=true`).catch(() => null);
 
       if (res?.data?.geometry?.coordinates && Array.isArray(res.data.geometry.coordinates)) {
         const leafletCoords: Array<[number, number]> = res.data.geometry.coordinates.map(
@@ -284,8 +284,8 @@ export default function ManagerDashboard() {
       }
 
       // 2. Direct OSRM public engine fallback
-      const startLng = Number(shipment.current_lng || shipment.origin_lng);
-      const startLat = Number(shipment.current_lat || shipment.origin_lat);
+      const startLng = Number(shipment.origin_lng || shipment.current_lng);
+      const startLat = Number(shipment.origin_lat || shipment.current_lat);
       const endLng = Number(shipment.destination_lng);
       const endLat = Number(shipment.destination_lat);
 
@@ -577,49 +577,93 @@ export default function ManagerDashboard() {
 
     const interval = setInterval(async () => {
       try {
-        const res = await apiFetch<any>(`/shipments/${selectedShipment.id}`);
+        const res = await apiFetch<any>(`/shipments/${selectedShipment.id}/location`);
         if (res?.success && res?.data) {
-          const fresh = res.data?.shipment || res.data;
+          const fresh = res.data;
+          const freshLat = fresh.location?.latitude ?? fresh.latitude;
+          const freshLng = fresh.location?.longitude ?? fresh.longitude;
+          const freshTemp = fresh.temperature;
+          const freshStatus = fresh.status;
+
           // Only update if coordinates, temp, or status changed
           setSelectedShipment((prev) => {
-            if (!prev || prev.id !== fresh.id) return prev;
+            if (!prev || prev.id !== fresh.shipment_id) return prev;
             if (
-              prev.current_lat === fresh.current_lat &&
-              prev.current_lng === fresh.current_lng &&
-              prev.current_temp === fresh.current_temp &&
-              prev.status === fresh.status
+              prev.current_lat === freshLat &&
+              prev.current_lng === freshLng &&
+              prev.current_temp === freshTemp &&
+              (!freshStatus || prev.status === freshStatus)
             ) {
               return prev;
             }
             return {
               ...prev,
-              current_lat: fresh.current_lat,
-              current_lng: fresh.current_lng,
-              current_temp: fresh.current_temp,
-              status: fresh.status,
+              current_lat: freshLat,
+              current_lng: freshLng,
+              current_temp: freshTemp,
+              status: freshStatus || prev.status,
             };
           });
 
           // Also keep the shipment in the shipments list up to date
           setShipments((prev) =>
             prev.map((s) =>
-              s.id === fresh.id
+              s.id === fresh.shipment_id
                 ? {
                     ...s,
-                    current_lat: fresh.current_lat,
-                    current_lng: fresh.current_lng,
-                    current_temp: fresh.current_temp,
-                    status: fresh.status,
+                    current_lat: freshLat,
+                    current_lng: freshLng,
+                    current_temp: freshTemp,
+                    status: freshStatus || s.status,
                   }
                 : s
             )
           );
         }
       } catch {}
-    }, 2500);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [selectedShipment?.id, selectedShipment?.status]);
+
+  // Instantaneous 0ms cross-tab broadcast synchronization from driver simulation
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
+    const bc = new BroadcastChannel('coldguard_live_tracking');
+    bc.onmessage = (event) => {
+      const { shipmentId, latitude, longitude, temperature, status } = event.data || {};
+      if (!shipmentId) return;
+
+      setSelectedShipment((prev) => {
+        if (!prev || prev.id !== shipmentId) return prev;
+        return {
+          ...prev,
+          current_lat: latitude,
+          current_lng: longitude,
+          current_temp: temperature,
+          status: status || prev.status,
+        };
+      });
+
+      setShipments((prev) =>
+        prev.map((s) =>
+          s.id === shipmentId
+            ? {
+                ...s,
+                current_lat: latitude,
+                current_lng: longitude,
+                current_temp: temperature,
+                status: status || s.status,
+              }
+            : s
+        )
+      );
+    };
+
+    return () => {
+      bc.close();
+    };
+  }, []);
 
   // Compute live driver availability
   const safeShipments = Array.isArray(shipments) ? shipments : [];

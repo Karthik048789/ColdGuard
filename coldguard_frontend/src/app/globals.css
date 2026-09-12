@@ -86,3 +86,12 @@ body {
 .leaflet-popup-pane {
   z-index: 700;
 }
+
+/* Smooth Real-Time GPS Truck Glide Animation */
+.leaflet-marker-icon.cg-live-truck-marker {
+  transition: transform 0.95s linear !important;
+  will-change: transform;
+}
+.leaflet-zoom-anim .leaflet-marker-icon.cg-live-truck-marker {
+  transition: none !important;
+}

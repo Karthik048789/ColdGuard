@@ -370,6 +370,22 @@ export default function DriverPage() {
       if (Math.abs(newTemp - (telemetry?.temperature ?? 4.2)) >= 0.25) {
         setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
       }
+
+      // Zero-latency cross-tab broadcast for manager dashboard real-time tracking
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        try {
+          const bc = new BroadcastChannel('coldguard_live_tracking');
+          bc.postMessage({
+            shipmentId: sid,
+            latitude: lat,
+            longitude: lng,
+            temperature: newTemp,
+            speed,
+            status: driverStatusRef.current === 'emergency' ? 'CRITICAL' : 'IN_TRANSIT',
+          });
+          bc.close();
+        } catch {}
+      }
     } catch {}
   }, []);
 
