@@ -171,6 +171,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
   const animIdRef = useRef<number | null>(null);
   const routeIndexRef = useRef<number>(0);
   const isTransitioningRef = useRef<boolean>(false);
+  const hasFittedInitialBoundsRef = useRef<boolean>(false);
   const currentBearingRef = useRef<number>(0);
   const routeCoordsRef = useRef<[number, number][]>(routeCoordinates);
   routeCoordsRef.current = routeCoordinates;
@@ -391,7 +392,10 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
       try { map.resize(); } catch {}
       if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
         drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
-        fitOverviewBounds();
+        if (!hasFittedInitialBoundsRef.current && cameraModeRef.current !== 'drive') {
+          hasFittedInitialBoundsRef.current = true;
+          fitOverviewBounds();
+        }
       }
       setTimeout(() => {
         try { map.resize(); } catch {}
@@ -478,7 +482,8 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
       drawOrUpdateRoute(map, routeCoordinates, isEmergency);
       updateSvgPath();
 
-      if (!isNavigating) {
+      if (!hasFittedInitialBoundsRef.current && !isNavigating && cameraModeRef.current !== 'drive') {
+        hasFittedInitialBoundsRef.current = true;
         fitOverviewBounds();
       }
     } else if (emergChanged) {
@@ -811,7 +816,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
       clearTimeout(easeTimer);
       if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
     };
-  }, [isNavigating, isEmergency, destinationName, facilityName, onArrival, onLocationUpdate]);
+  }, [isNavigating, isEmergency]);
 
   // View Controls
   const toggleCameraMode = () => {

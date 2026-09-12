@@ -261,7 +261,7 @@ export default function DriverPage() {
     } catch (e) {
       console.error('Failed to fetch OSRM route:', e);
     }
-  }, [telemetry?.latitude, telemetry?.longitude]);
+  }, []);
 
   // Fetch active shipment assigned to this driver
   useEffect(() => {
@@ -336,7 +336,7 @@ export default function DriverPage() {
         console.error('Error loading shipment:', e);
       }
     })();
-  }, [token, fetchRouteData]);
+  }, [token]);
 
   // Periodic Location & Telemetry Sync callback from Map (silent sync, zero render thrash)
   const handleLocationUpdate = useCallback(async (lng: number, lat: number, speed: number) => {
@@ -371,15 +371,21 @@ export default function DriverPage() {
         setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
       }
     } catch {}
-  }, [telemetry?.temperature]);
+  }, []);
+
+  const emergencyFacilityRef = useRef<any>(emergencyFacility);
+  emergencyFacilityRef.current = emergencyFacility;
+  const driverStatusRef = useRef<string>(driverStatus);
+  driverStatusRef.current = driverStatus;
 
   // Handle arrival at either emergency facility or final destination
   const handleArrival = useCallback(async () => {
-    if (driverStatus === 'emergency') {
+    if (driverStatusRef.current === 'emergency') {
       // 1. ARRIVED AT NEARBY EMERGENCY FACILITY -> STOP HERE!
       setDriverStatus('at_facility');
       setIsAtFacility(true);
-      const facName = emergencyFacility?.name?.split(',')[0] || 'Emergency Cold Storage';
+      const fac = emergencyFacilityRef.current;
+      const facName = fac?.name?.split(',')[0] || 'Emergency Cold Storage';
       setActionMsg(`❄️ Arrived at ${facName}! Cargo secured & stabilized at 3.5°C.`);
       // Normalize cargo temperature inside cold storage
       setTelemetry((prev) => (prev ? { ...prev, temperature: 3.5 } : prev));
@@ -387,7 +393,7 @@ export default function DriverPage() {
       // Report safe arrival at facility to backend
       const tk = tokenRef.current;
       const sid = shipmentIdRef.current;
-      if (tk && sid && emergencyFacility) {
+      if (tk && sid && fac) {
         try {
           await fetch(`${API}/shipments/${sid}/telemetry`, {
             method: 'POST',
@@ -396,8 +402,8 @@ export default function DriverPage() {
               temperature: 3.5,
               humidity: 60.0,
               battery: 90.0,
-              latitude: emergencyFacility.latitude,
-              longitude: emergencyFacility.longitude,
+              latitude: fac.latitude,
+              longitude: fac.longitude,
               recorded_at: new Date().toISOString(),
             }),
           });
@@ -408,7 +414,7 @@ export default function DriverPage() {
       setDriverStatus('delivered');
       setActionMsg('✓ Arrived at destination hospital vault! Ready for delivery confirmation.');
     }
-  }, [driverStatus, emergencyFacility]);
+  }, []);
 
   // Controls
   const handleStart = async () => {
@@ -777,6 +783,27 @@ export default function DriverPage() {
     );
   }
 
+  const stableOriginCoord = useMemo<[number, number] | null>(() => {
+    if (shipment?.origin_lng && shipment?.origin_lat) {
+      return [Number(shipment.origin_lng), Number(shipment.origin_lat)];
+    }
+    return routeCoordinates.length > 0 ? routeCoordinates[0] : null;
+  }, [shipment?.id, routeCoordinates.length > 0 ? routeCoordinates[0][0] : 0]);
+
+  const stableDestCoord = useMemo<[number, number] | null>(() => {
+    if (shipment?.destination_lng && shipment?.destination_lat) {
+      return [Number(shipment.destination_lng), Number(shipment.destination_lat)];
+    }
+    return routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1] : null;
+  }, [shipment?.id, routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1][0] : 0]);
+
+  const stableFacilityCoord = useMemo<[number, number] | null>(() => {
+    if (emergencyFacility?.longitude && emergencyFacility?.latitude) {
+      return [Number(emergencyFacility.longitude), Number(emergencyFacility.latitude)];
+    }
+    return null;
+  }, [emergencyFacility?.id]);
+
   // -------------------------------------------------------------
   // 3. LOGGED IN & ASSIGNED: Render Full Google Maps Style 3D Navigation UI
   // -------------------------------------------------------------
@@ -792,35 +819,13 @@ export default function DriverPage() {
           isEmergency={isEmergency}
           currentStreet={currentStreet}
           nextStep={nextStep}
-          currentCoord={
-            telemetry?.latitude && telemetry?.longitude
-              ? [Number(telemetry.longitude), Number(telemetry.latitude)]
-              : shipment?.current_lat && shipment?.current_lng
-              ? [Number(shipment.current_lng), Number(shipment.current_lat)]
-              : null
-          }
-          originCoord={
-            shipment?.origin_lng && shipment?.origin_lat
-              ? [Number(shipment.origin_lng), Number(shipment.origin_lat)]
-              : routeCoordinates.length > 0
-              ? routeCoordinates[0]
-              : null
-          }
+          currentCoord={stableOriginCoord}
+          originCoord={stableOriginCoord}
           originName={shipment?.origin_name || 'Sub District Hospital, Ponda'}
-          destinationCoord={
-            shipment?.destination_lng && shipment?.destination_lat
-              ? [Number(shipment.destination_lng), Number(shipment.destination_lat)]
-              : routeCoordinates.length > 0
-              ? routeCoordinates[routeCoordinates.length - 1]
-              : null
-          }
+          destinationCoord={stableDestCoord}
           destinationName={shipment?.destination_name || 'North Goa District Hospital, Mapusa'}
           facilities={facilities}
-          facilityCoord={
-            emergencyFacility?.longitude && emergencyFacility?.latitude
-              ? [Number(emergencyFacility.longitude), Number(emergencyFacility.latitude)]
-              : null
-          }
+          facilityCoord={stableFacilityCoord}
           facilityName={emergencyFacility?.name}
           onLocationUpdate={handleLocationUpdate}
           onArrival={handleArrival}
