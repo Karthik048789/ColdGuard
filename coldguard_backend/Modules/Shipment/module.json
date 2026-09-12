@@ -1,0 +1,11 @@
+{
+    "name": "Shipment",
+    "alias": "shipment",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\Shipment\\App\\Providers\\ShipmentServiceProvider"
+    ],
+    "files": []
+}

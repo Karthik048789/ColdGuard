@@ -1,0 +1,11 @@
+{
+    "name": "Routing",
+    "alias": "routing",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\Routing\\App\\Providers\\RoutingServiceProvider"
+    ],
+    "files": []
+}

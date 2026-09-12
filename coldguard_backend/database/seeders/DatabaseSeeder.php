@@ -3,23 +3,50 @@
 namespace Database\Seeders;
 
 use App\Models\User;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
 
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
     /**
-     * Seed the application's database.
+     * Seed the application's database with default role users.
      */
     public function run(): void
     {
-        // User::factory(10)->create();
+        // 1. Shipment Manager Account
+        User::updateOrCreate(
+            ['email' => 'manager@coldguard.ai'],
+            [
+                'name' => 'Dr. Anjali Sharma (Logistics Manager)',
+                'password' => Hash::make('password123'),
+                'role' => 'manager',
+                'phone' => '+91 9876543210',
+            ]
+        );
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // 2. Cold-Chain Driver Account
+        User::updateOrCreate(
+            ['email' => 'driver@coldguard.ai'],
+            [
+                'name' => 'Rajesh Kumar (Cold-Chain Transport Driver)',
+                'password' => Hash::make('password123'),
+                'role' => 'driver',
+                'phone' => '+91 9876543211',
+            ]
+        );
+
+        // 3. Healthcare Receiver Account
+        User::updateOrCreate(
+            ['email' => 'receiver@coldguard.ai'],
+            [
+                'name' => 'Thrissur District Hospital (Receiver)',
+                'password' => Hash::make('password123'),
+                'role' => 'receiver',
+                'phone' => '+91 9876543212',
+            ]
+        );
+
+        // Seed Healthcare Demo Shipments
+        $this->call(\Modules\Shipment\Database\Seeders\ShipmentDatabaseSeeder::class);
     }
 }
