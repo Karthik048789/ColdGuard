@@ -594,6 +594,27 @@ export default function DriverPage() {
     }
   };
 
+  const stableOriginCoord = useMemo<[number, number] | null>(() => {
+    if (shipment?.origin_lng && shipment?.origin_lat) {
+      return [Number(shipment.origin_lng), Number(shipment.origin_lat)];
+    }
+    return routeCoordinates.length > 0 ? routeCoordinates[0] : null;
+  }, [shipment?.id, routeCoordinates.length > 0 ? routeCoordinates[0][0] : 0]);
+
+  const stableDestCoord = useMemo<[number, number] | null>(() => {
+    if (shipment?.destination_lng && shipment?.destination_lat) {
+      return [Number(shipment.destination_lng), Number(shipment.destination_lat)];
+    }
+    return routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1] : null;
+  }, [shipment?.id, routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1][0] : 0]);
+
+  const stableFacilityCoord = useMemo<[number, number] | null>(() => {
+    if (emergencyFacility?.longitude && emergencyFacility?.latitude) {
+      return [Number(emergencyFacility.longitude), Number(emergencyFacility.latitude)];
+    }
+    return null;
+  }, [emergencyFacility?.id]);
+
   // Temperature math
   const temp = telemetry?.temperature ?? shipment?.current_temp;
   const minT = shipment?.min_temp ?? 2;
@@ -782,27 +803,6 @@ export default function DriverPage() {
       </div>
     );
   }
-
-  const stableOriginCoord = useMemo<[number, number] | null>(() => {
-    if (shipment?.origin_lng && shipment?.origin_lat) {
-      return [Number(shipment.origin_lng), Number(shipment.origin_lat)];
-    }
-    return routeCoordinates.length > 0 ? routeCoordinates[0] : null;
-  }, [shipment?.id, routeCoordinates.length > 0 ? routeCoordinates[0][0] : 0]);
-
-  const stableDestCoord = useMemo<[number, number] | null>(() => {
-    if (shipment?.destination_lng && shipment?.destination_lat) {
-      return [Number(shipment.destination_lng), Number(shipment.destination_lat)];
-    }
-    return routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1] : null;
-  }, [shipment?.id, routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1][0] : 0]);
-
-  const stableFacilityCoord = useMemo<[number, number] | null>(() => {
-    if (emergencyFacility?.longitude && emergencyFacility?.latitude) {
-      return [Number(emergencyFacility.longitude), Number(emergencyFacility.latitude)];
-    }
-    return null;
-  }, [emergencyFacility?.id]);
 
   // -------------------------------------------------------------
   // 3. LOGGED IN & ASSIGNED: Render Full Google Maps Style 3D Navigation UI
