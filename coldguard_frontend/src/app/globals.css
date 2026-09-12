@@ -89,7 +89,7 @@ body {
 
 /* Smooth Real-Time GPS Truck Glide Animation */
 .leaflet-marker-icon.cg-live-truck-marker {
-  transition: transform 0.95s linear !important;
+  transition: transform 1.95s linear !important;
   will-change: transform;
 }
 .leaflet-zoom-anim .leaflet-marker-icon.cg-live-truck-marker {

@@ -689,6 +689,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
 
     let lastTime = performance.now();
     let lastThrottledUpdate = 0;
+    let lastLocationSync = 0;
 
     const tick = (now: number) => {
       const coords = routeCoordsRef.current;
@@ -801,6 +802,11 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
             if (turnIconRef.current) turnIconRef.current.innerText = '↑';
           }
 
+        }
+
+        // Live location update triggered every 2.0 seconds (user requested 2 to 3 sec cadence)
+        if (now - lastLocationSync >= 2000) {
+          lastLocationSync = now;
           if (onLocationUpdateRef.current) {
             onLocationUpdateRef.current(lng, lat, speed);
           }

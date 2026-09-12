@@ -135,6 +135,7 @@ export default function DriverPage() {
   shipmentIdRef.current = shipmentId;
   const telemetryRef = useRef<TelemetryData | null>(null);
   telemetryRef.current = telemetry;
+  const isSyncingRef = useRef<boolean>(false);
 
   // Check saved token on mount
   useEffect(() => {
@@ -338,7 +339,7 @@ export default function DriverPage() {
     })();
   }, [token]);
 
-  // Periodic Location & Telemetry Sync callback from Map (silent sync, zero render thrash)
+  // Periodic Location & Telemetry Sync callback from Map (every 2-3 seconds, zero render thrash)
   const handleLocationUpdate = useCallback(async (lng: number, lat: number, speed: number) => {
     const tk = tokenRef.current;
     const sid = shipmentIdRef.current;
@@ -347,6 +348,32 @@ export default function DriverPage() {
     const curT = telemetryRef.current?.temperature ?? 4.2;
     const newTemp = parseFloat((curT + (Math.random() * 0.04 - 0.02)).toFixed(2));
 
+    // 1. Keep ref updated silently without forcing React to re-render DriverPage
+    if (telemetryRef.current) {
+      telemetryRef.current.latitude = lat;
+      telemetryRef.current.longitude = lng;
+      telemetryRef.current.temperature = newTemp;
+    }
+
+    // 2. Immediate zero-latency cross-tab broadcast for manager dashboard real-time tracking
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const bc = new BroadcastChannel('coldguard_live_tracking');
+        bc.postMessage({
+          shipmentId: sid,
+          latitude: lat,
+          longitude: lng,
+          temperature: newTemp,
+          speed,
+          status: driverStatusRef.current === 'emergency' ? 'CRITICAL' : 'IN_TRANSIT',
+        });
+        bc.close();
+      } catch {}
+    }
+
+    // 3. Persistent backend telemetry post every 2-3 seconds without request pile-up
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
     try {
       await fetch(`${API}/shipments/${sid}/telemetry`, {
         method: 'POST',
@@ -360,33 +387,13 @@ export default function DriverPage() {
           recorded_at: new Date().toISOString(),
         }),
       });
-      // Keep ref updated silently without forcing React to re-render DriverPage every 1 second
-      if (telemetryRef.current) {
-        telemetryRef.current.latitude = lat;
-        telemetryRef.current.longitude = lng;
-        telemetryRef.current.temperature = newTemp;
-      }
-      // Only trigger React state update if temperature drifted by >= 0.25°C
+
       if (Math.abs(newTemp - (telemetry?.temperature ?? 4.2)) >= 0.25) {
         setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
       }
-
-      // Zero-latency cross-tab broadcast for manager dashboard real-time tracking
-      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-        try {
-          const bc = new BroadcastChannel('coldguard_live_tracking');
-          bc.postMessage({
-            shipmentId: sid,
-            latitude: lat,
-            longitude: lng,
-            temperature: newTemp,
-            speed,
-            status: driverStatusRef.current === 'emergency' ? 'CRITICAL' : 'IN_TRANSIT',
-          });
-          bc.close();
-        } catch {}
-      }
-    } catch {}
+    } catch {} finally {
+      isSyncingRef.current = false;
+    }
   }, []);
 
   const emergencyFacilityRef = useRef<any>(emergencyFacility);

@@ -570,7 +570,7 @@ export default function ManagerDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  // Real-time live polling for selected shipment telemetry & moving truck position
+  // Real-time live polling for selected shipment telemetry & moving truck position (every 2-3 sec)
   useEffect(() => {
     if (!selectedShipment) return;
     if (selectedShipment.status === 'DELIVERED') return;
@@ -584,47 +584,59 @@ export default function ManagerDashboard() {
           const freshLng = fresh.location?.longitude ?? fresh.longitude;
           const freshTemp = fresh.temperature;
           const freshStatus = fresh.status;
+          const targetId = fresh.shipment_id ?? fresh.id;
 
-          // Only update if coordinates, temp, or status changed
-          setSelectedShipment((prev) => {
-            if (!prev || prev.id !== fresh.shipment_id) return prev;
-            if (
-              prev.current_lat === freshLat &&
-              prev.current_lng === freshLng &&
-              prev.current_temp === freshTemp &&
-              (!freshStatus || prev.status === freshStatus)
-            ) {
-              return prev;
+          if (targetId) {
+            setSelectedShipment((prev) => {
+              if (!prev || prev.id !== targetId) return prev;
+              if (
+                prev.current_lat === freshLat &&
+                prev.current_lng === freshLng &&
+                prev.current_temp === freshTemp &&
+                (!freshStatus || prev.status === freshStatus)
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                current_lat: freshLat,
+                current_lng: freshLng,
+                current_temp: freshTemp,
+                status: freshStatus || prev.status,
+              };
+            });
+
+            // Keep shipments feed list card synchronized
+            setShipments((prev) =>
+              prev.map((s) =>
+                s.id === targetId
+                  ? {
+                      ...s,
+                      current_lat: freshLat,
+                      current_lng: freshLng,
+                      current_temp: freshTemp,
+                      status: freshStatus || s.status,
+                    }
+                  : s
+              )
+            );
+
+            // Dynamically count down remaining distance and ETA as truck drives
+            if (freshLat && freshLng && selectedShipment.destination_lat && selectedShipment.destination_lng) {
+              const dLat = ((Number(selectedShipment.destination_lat) - freshLat) * Math.PI) / 180;
+              const dLng = ((Number(selectedShipment.destination_lng) - freshLng) * Math.PI) / 180;
+              const a = Math.sin(dLat / 2) ** 2 + Math.cos((freshLat * Math.PI) / 180) * Math.cos((Number(selectedShipment.destination_lat) * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+              const distKm = Number((6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 1.25).toFixed(1));
+              const durMin = Math.max(1, Math.round((distKm / 45) * 60));
+              setRouteMeta((prev) => prev ? { ...prev, distanceKm: distKm, durationMin: durMin } : { distanceKm: distKm, durationMin: durMin });
             }
-            return {
-              ...prev,
-              current_lat: freshLat,
-              current_lng: freshLng,
-              current_temp: freshTemp,
-              status: freshStatus || prev.status,
-            };
-          });
-
-          // Also keep the shipment in the shipments list up to date
-          setShipments((prev) =>
-            prev.map((s) =>
-              s.id === fresh.shipment_id
-                ? {
-                    ...s,
-                    current_lat: freshLat,
-                    current_lng: freshLng,
-                    current_temp: freshTemp,
-                    status: freshStatus || s.status,
-                  }
-                : s
-            )
-          );
+          }
         }
       } catch {}
-    }, 1000);
+    }, 2000);
 
     return () => clearInterval(interval);
-  }, [selectedShipment?.id, selectedShipment?.status]);
+  }, [selectedShipment?.id, selectedShipment?.status, selectedShipment?.destination_lat, selectedShipment?.destination_lng]);
 
   // Instantaneous 0ms cross-tab broadcast synchronization from driver simulation
   useEffect(() => {
@@ -658,12 +670,22 @@ export default function ManagerDashboard() {
             : s
         )
       );
+
+      // Dynamically count down remaining distance and ETA
+      if (latitude && longitude && selectedShipment?.destination_lat && selectedShipment?.destination_lng) {
+        const dLat = ((Number(selectedShipment.destination_lat) - latitude) * Math.PI) / 180;
+        const dLng = ((Number(selectedShipment.destination_lng) - longitude) * Math.PI) / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos((latitude * Math.PI) / 180) * Math.cos((Number(selectedShipment.destination_lat) * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+        const distKm = Number((6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 1.25).toFixed(1));
+        const durMin = Math.max(1, Math.round((distKm / 45) * 60));
+        setRouteMeta((prev) => prev ? { ...prev, distanceKm: distKm, durationMin: durMin } : { distanceKm: distKm, durationMin: durMin });
+      }
     };
 
     return () => {
       bc.close();
     };
-  }, []);
+  }, [selectedShipment?.destination_lat, selectedShipment?.destination_lng]);
 
   // Compute live driver availability
   const safeShipments = Array.isArray(shipments) ? shipments : [];
