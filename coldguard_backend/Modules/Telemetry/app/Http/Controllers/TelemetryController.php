@@ -202,9 +202,10 @@ class TelemetryController extends Controller
         $endLng = $shipment->destination_lng;
 
         // Base values
-        $baseTemp = 6.1;
+        $latestReading = Telemetry::where('shipment_id', $shipment->id)->latest('recorded_at')->first();
+        $currentTemp = $latestReading ? (float) $latestReading->temperature : 5.5;
         $baseHumidity = 72.0;
-        $baseBattery = 92.0;
+        $baseBattery = 90.0;
 
         for ($i = 0; $i < $steps; $i++) {
             $progress = $i / ($steps - 1);
@@ -212,11 +213,12 @@ class TelemetryController extends Controller
             $lng = round($startLng + ($endLng - $startLng) * $progress * 0.4, 7);
             
             if ($scenario === 'normal') {
-                // Temp stays safe (6.1, 6.2, 6.3, 6.4, 6.5, 6.6)
-                $temp = round($baseTemp + ($i * 0.1), 2);
+                // Temp stays safe in 2°C - 8°C range
+                $temp = round(4.5 + ($i * 0.2), 2);
             } else {
-                // Failure scenario: progressive rise (6.1, 6.5, 6.9, 7.3, 7.8, 8.4)
-                $temp = round($baseTemp + ($i * 0.46), 2);
+                // Failure scenario: progressive rise from current temperature (+2°C to +4.5°C)
+                $startFailureTemp = max($currentTemp, 7.8);
+                $temp = round($startFailureTemp + (($i + 1) * 0.65), 2);
             }
 
             $humidity = round($baseHumidity - ($i * 0.5) + (rand(-10, 10) / 10), 2);
@@ -233,6 +235,13 @@ class TelemetryController extends Controller
                 'recorded_at' => $recordedAt,
                 'is_anomaly' => ($temp > $shipment->max_temp || $temp < $shipment->min_temp),
             ]);
+
+            // Automatically escalate shipment status on excursion
+            if ($temp > $shipment->max_temp) {
+                $shipment->status = ($temp > ($shipment->max_temp + 3)) ? 'CRITICAL' : 'WARNING';
+                $shipment->current_temp = $temp;
+                $shipment->save();
+            }
 
             $generatedReadings[] = [
                 'id' => $telemetry->id,

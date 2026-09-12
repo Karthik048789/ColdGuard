@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
-const MapLibreNavMap = dynamic(() => import('@/components/maps/MapLibreNavMap'), { ssr: false });
+const DriverNavMap = dynamic(() => import('@/components/maps/DriverNavMap'), { ssr: false });
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -365,18 +365,47 @@ export default function DriverPage() {
     setTimeout(() => setTempPulse(false), 800);
 
     try {
-      // 1. Trigger failure spike (+11.8°C)
-      const simRes = await fetch(`${API}/shipments/${shipmentId}/telemetry/simulate`, {
+      // 1. Progressively increase container temperature (+2.2°C to +3.5°C each click)
+      const curTemp = telemetry?.temperature ?? shipment?.current_temp ?? 6.2;
+      const newSpikeTemp = parseFloat((curTemp + 2.2 + Math.random() * 0.8).toFixed(2));
+
+      // Post real telemetry reading to backend database (/api/shipments/{id}/telemetry)
+      const curLat = telemetry?.latitude ?? shipment?.origin_lat ?? 15.4647;
+      const curLng = telemetry?.longitude ?? shipment?.origin_lng ?? 73.8560;
+
+      await fetch(`${API}/shipments/${shipmentId}/telemetry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          temperature: newSpikeTemp,
+          humidity: 68.0,
+          battery: 88.0,
+          latitude: curLat,
+          longitude: curLng,
+        }),
+      });
+
+      // Trigger failure simulation & AI risk analysis on backend
+      fetch(`${API}/shipments/${shipmentId}/telemetry/simulate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ scenario: 'failure' }),
-      });
-      const simData = await simRes.json();
-      if (simData.success && simData.data?.latest_reading) {
-        setTelemetry(simData.data.latest_reading);
-      }
+      }).catch(() => null);
 
-      // 2. Fetch nearest eligible cold-storage facility
+      fetch(`${API}/shipments/${shipmentId}/analyze-risk`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => null);
+
+      // Immediately update local UI telemetry state so temperature visibly increases!
+      setTelemetry((prev) => ({
+        ...(prev || { humidity: 68, battery: 88, recorded_at: new Date().toISOString() }),
+        temperature: newSpikeTemp,
+        latitude: curLat,
+        longitude: curLng,
+      }));
+
+      // 2. Fetch nearest eligible cold-storage facility (/api/shipments/{id}/facilities/eligible)
       const facRes = await fetch(`${API}/shipments/${shipmentId}/facilities/eligible`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -386,14 +415,17 @@ export default function DriverPage() {
       if (nearest) {
         setEmergencyFacility(nearest);
         setIsAtFacility(false);
-        setActionMsg('');
-        // 3. Recalculate direct route to this nearby facility
+        const facShortName = nearest.name.split(',')[0];
+        setActionMsg(`⚠️ Temp breach: ${newSpikeTemp}°C! Rerouting to ${facShortName}...`);
+
+        // 3. Recalculate road route to this nearby facility
         await fetchRouteData(token, shipmentId, nearest.id);
+
         // 4. Start navigating towards facility!
         setDriverStatus('emergency');
       } else {
         setDriverStatus('emergency');
-        setActionMsg('');
+        setActionMsg(`⚠️ Temp breach: ${newSpikeTemp}°C! Thermal anomaly recorded.`);
       }
     } catch {
       setActionMsg('Error triggering temperature failure.');
@@ -592,7 +624,7 @@ export default function DriverPage() {
     <div style={s.navScreenWrap}>
       {/* 3D MapLibre Navigation Canvas (FullScreen Background) */}
       <div style={s.mapCanvasWrapper}>
-        <MapLibreNavMap
+        <DriverNavMap
           routeCoordinates={routeCoordinates}
           routeSteps={routeSteps}
           isNavigating={isMoving || isEmergency}
