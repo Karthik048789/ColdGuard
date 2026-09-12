@@ -1,4 +1,4 @@
-FROM php:8.2-cli
+FROM php:8.4-cli
 
 # Install system dependencies & PostgreSQL driver
 RUN apt-get update && apt-get install -y \
@@ -18,7 +18,7 @@ WORKDIR /var/www/html
 COPY . /var/www/html
 
 # Install dependencies
-RUN composer install --no-dev --optimize-autoloader
+RUN composer install --no-dev --optimize-autoloader --ignore-platform-req=php+
 
 # Expose port and start Laravel
 EXPOSE 8000
