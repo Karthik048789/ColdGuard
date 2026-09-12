@@ -56,6 +56,13 @@ class TelemetryController extends Controller
             'current_lng' => $validated['longitude'],
         ]);
 
+        // Automatically trigger Risk Analysis & Intervention decision pipeline
+        $riskEngine = app(\Modules\RiskAnalysis\App\Services\RiskEngineService::class);
+        $riskEvent = $riskEngine->evaluateRisk($shipment);
+
+        $interventionService = app(\Modules\Intervention\App\Services\InterventionService::class);
+        $interventionResult = $interventionService->processRiskEvent($shipment, $riskEvent);
+
         return response()->json([
             'success' => true,
             'message' => 'Telemetry recorded successfully',
@@ -246,6 +253,13 @@ class TelemetryController extends Controller
                 'current_lng' => $lng,
             ]);
         }
+
+        // Automatically trigger Risk Analysis & Intervention decision pipeline after simulation
+        $riskEngine = app(\Modules\RiskAnalysis\App\Services\RiskEngineService::class);
+        $riskEvent = $riskEngine->evaluateRisk($shipment);
+
+        $interventionService = app(\Modules\Intervention\App\Services\InterventionService::class);
+        $interventionResult = $interventionService->processRiskEvent($shipment, $riskEvent);
 
         return response()->json([
             'success' => true,

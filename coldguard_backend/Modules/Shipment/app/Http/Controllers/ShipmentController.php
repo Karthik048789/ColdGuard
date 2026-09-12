@@ -147,6 +147,16 @@ class ShipmentController extends Controller
             'current_lng' => $shipment->destination_lng,
         ]);
 
+        // Automatically resolve active interventions when delivered
+        $activeInterventions = \Modules\Intervention\App\Models\Intervention::where('shipment_id', $shipment->id)
+            ->whereIn('status', ['PENDING', 'ACTIVE', 'FACILITY_SELECTED', 'DIVERTED'])
+            ->get();
+
+        $interventionService = app(\Modules\Intervention\App\Services\InterventionService::class);
+        foreach ($activeInterventions as $inv) {
+            $interventionService->resolveIntervention($inv);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Shipment delivered successfully',
