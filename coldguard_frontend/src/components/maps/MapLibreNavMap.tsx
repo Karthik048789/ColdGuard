@@ -11,6 +11,15 @@ export interface RouteStep {
   location?: { latitude: number; longitude: number };
 }
 
+export interface FacilityItem {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  city?: string;
+  available_capacity?: number;
+}
+
 export interface NavMapProps {
   routeCoordinates: [number, number][]; // [[lng, lat], ...]
   routeSteps?: RouteStep[];
@@ -18,10 +27,13 @@ export interface NavMapProps {
   isEmergency?: boolean;
   currentStreet?: string;
   nextStep?: any;
+  originCoord?: [number, number] | null;
+  originName?: string;
   destinationCoord?: [number, number] | null;
   destinationName?: string;
   facilityCoord?: [number, number] | null;
   facilityName?: string;
+  facilities?: FacilityItem[];
   onLocationUpdate?: (lng: number, lat: number, speed: number) => void;
   onArrival?: () => void;
   className?: string;
@@ -29,7 +41,6 @@ export interface NavMapProps {
 
 const CARTO_KEY = 'cb1_3ig8_1_11956d158c962eee4dd04aed';
 
-// Valid GeoJSON FeatureCollection initialization
 const OSM_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {
@@ -66,7 +77,7 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
       source: 'route-source',
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: {
-        'line-color': '#174ea6', // Deep navy outer casing for Google Maps depth
+        'line-color': '#174ea6',
         'line-width': 12,
         'line-opacity': 0.95,
       },
@@ -77,7 +88,7 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
       source: 'route-source',
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: {
-        'line-color': '#1a73e8', // Google Maps vibrant electric blue navigation line
+        'line-color': '#1a73e8',
         'line-width': 7.5,
         'line-opacity': 1,
       },
@@ -115,23 +126,38 @@ export default function MapLibreNavMap({
   isNavigating,
   isEmergency = false,
   currentStreet = 'NH 66 Panaji-Margao Hwy',
+  originCoord,
+  originName = 'GMC Bambolim Central Vault',
   destinationCoord,
   destinationName = 'South Goa District Hospital',
   facilityCoord,
   facilityName = 'Cold Storage Facility',
+  facilities = [],
   onLocationUpdate,
   onArrival,
   className = 'w-full h-full',
 }: NavMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+
+  // Markers
   const puckMarkerRef = useRef<maplibregl.Marker | null>(null);
   const puckElRef = useRef<HTMLDivElement | null>(null);
   const streetPillRef = useRef<HTMLSpanElement | null>(null);
   const arrowSvgRef = useRef<SVGElement | null>(null);
 
+  const startMarkerRef = useRef<maplibregl.Marker | null>(null);
   const destMarkerRef = useRef<maplibregl.Marker | null>(null);
-  const facMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const emergMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const facMarkersRef = useRef<maplibregl.Marker[]>([]);
+
+  // Camera & view mode: 'drive' | 'overview'
+  const [cameraMode, setCameraMode] = useState<'drive' | 'overview'>('overview');
+  const cameraModeRef = useRef<'drive' | 'overview'>('overview');
+  cameraModeRef.current = cameraMode;
+
+  // SVG Polyline Path for 100% reliable visibility
+  const [svgPathD, setSvgPathD] = useState<string>('');
 
   // Animation & simulation refs
   const animIdRef = useRef<number | null>(null);
@@ -158,72 +184,146 @@ export default function MapLibreNavMap({
   const [activeStepDist, setActiveStepDist] = useState<string>('750 m');
   const [activeTurnIcon, setActiveTurnIcon] = useState<string>('↑');
 
-  // Robust function to draw or update the route polyline on MapLibre
+  // Synchronize SVG Polyline Overlay with MapLibre projected pixels
+  const updateSvgOverlay = useCallback(() => {
+    const map = mapRef.current;
+    const coords = routeCoordsRef.current;
+    if (!map || !coords || coords.length < 2) {
+      setSvgPathD('');
+      return;
+    }
+
+    try {
+      const pts = coords.map((c) => {
+        const p = map.project(c as [number, number]);
+        return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+      });
+      setSvgPathD('M ' + pts.join(' L '));
+    } catch {
+      setSvgPathD('');
+    }
+  }, []);
+
+  // Robust function to draw or update the route polyline on MapLibre GeoJSON layer
   const drawOrUpdateRoute = useCallback((map: maplibregl.Map, coords: [number, number][], emergency: boolean) => {
     if (!map || !coords || coords.length < 2) return;
 
-    const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
-      type: 'Feature',
-      properties: {},
-      geometry: {
-        type: 'LineString',
-        coordinates: coords,
-      },
+    const geojson: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: coords,
+          },
+        },
+      ],
     };
 
     const source = map.getSource('route-source') as maplibregl.GeoJSONSource | undefined;
     if (source) {
-      source.setData(geojson);
-    } else {
+      try {
+        source.setData(geojson);
+      } catch {}
+    } else if (map.isStyleLoaded()) {
       try {
         map.addSource('route-source', {
           type: 'geojson',
           data: geojson,
         });
-      } catch (e) {}
+      } catch {}
     }
 
-    if (!map.getLayer('route-casing')) {
-      try {
-        map.addLayer({
-          id: 'route-casing',
-          type: 'line',
-          source: 'route-source',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: {
-            'line-color': emergency ? '#7f1d1d' : '#174ea6',
-            'line-width': 12,
-            'line-opacity': 0.95,
-          },
-        });
-      } catch (e) {}
-    }
+    if (map.isStyleLoaded()) {
+      if (!map.getLayer('route-casing')) {
+        try {
+          map.addLayer({
+            id: 'route-casing',
+            type: 'line',
+            source: 'route-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: {
+              'line-color': emergency ? '#7f1d1d' : '#174ea6',
+              'line-width': 12,
+              'line-opacity': 0.95,
+            },
+          });
+        } catch {}
+      }
+      if (!map.getLayer('route-line')) {
+        try {
+          map.addLayer({
+            id: 'route-line',
+            type: 'line',
+            source: 'route-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: {
+              'line-color': emergency ? '#dc2626' : '#1a73e8',
+              'line-width': 7.5,
+              'line-opacity': 1,
+            },
+          });
+        } catch {}
+      }
 
-    if (!map.getLayer('route-line')) {
       try {
-        map.addLayer({
-          id: 'route-line',
-          type: 'line',
-          source: 'route-source',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: {
-            'line-color': emergency ? '#dc2626' : '#1a73e8',
-            'line-width': 7.5,
-            'line-opacity': 1,
-          },
-        });
-      } catch (e) {}
+        if (map.getLayer('route-line')) {
+          map.setPaintProperty('route-line', 'line-color', emergency ? '#dc2626' : '#1a73e8');
+        }
+        if (map.getLayer('route-casing')) {
+          map.setPaintProperty('route-casing', 'line-color', emergency ? '#7f1d1d' : '#174ea6');
+        }
+      } catch {}
     }
 
     try {
-      if (map.getLayer('route-line')) {
-        map.setPaintProperty('route-line', 'line-color', emergency ? '#dc2626' : '#1a73e8');
-      }
-      if (map.getLayer('route-casing')) {
-        map.setPaintProperty('route-casing', 'line-color', emergency ? '#7f1d1d' : '#174ea6');
-      }
-    } catch (e) {}
-  }, []);
+      map.triggerRepaint();
+    } catch {}
+
+    updateSvgOverlay();
+  }, [updateSvgOverlay]);
+
+  // Fit camera bounds to encompass the entire route, start, drop, and facilities
+  const fitOverviewBounds = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const bounds = new maplibregl.LngLatBounds();
+    let hasPoints = false;
+
+    if (routeCoordsRef.current && routeCoordsRef.current.length > 0) {
+      routeCoordsRef.current.forEach((c) => {
+        bounds.extend(c);
+        hasPoints = true;
+      });
+    }
+
+    if (originCoord) {
+      bounds.extend(originCoord);
+      hasPoints = true;
+    }
+
+    if (destinationCoord) {
+      bounds.extend(destinationCoord);
+      hasPoints = true;
+    }
+
+    if (hasPoints) {
+      try {
+        map.easeTo({
+          pitch: 0,
+          bearing: 0,
+          duration: 600,
+        });
+        map.fitBounds(bounds, {
+          padding: { top: 90, bottom: 120, left: 45, right: 45 },
+          maxZoom: 13.5,
+        });
+      } catch {}
+    }
+  }, [originCoord, destinationCoord]);
 
   // Initialize MapLibre
   useEffect(() => {
@@ -237,50 +337,56 @@ export default function MapLibreNavMap({
       container: mapContainerRef.current,
       style: OSM_STYLE,
       center: initialCoord,
-      zoom: 14.5,
-      pitch: 45,
-      bearing: 180,
+      zoom: 11,
+      pitch: 0,
+      bearing: 0,
       attributionControl: false,
     });
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: false }), 'bottom-right');
 
     map.on('load', () => {
       if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
         drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
-        const bounds = new maplibregl.LngLatBounds();
-        routeCoordsRef.current.forEach((c) => bounds.extend(c));
-        map.fitBounds(bounds, { padding: { top: 70, bottom: 90, left: 40, right: 40 }, maxZoom: 15 });
+        fitOverviewBounds();
       }
+      updateSvgOverlay();
     });
 
-    // Create Google Maps Navigation Puck (Marker)
+    map.on('styledata', () => {
+      if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
+        drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
+      }
+      updateSvgOverlay();
+    });
+
+    map.on('move', updateSvgOverlay);
+    map.on('zoom', updateSvgOverlay);
+    map.on('rotate', updateSvgOverlay);
+    map.on('pitch', updateSvgOverlay);
+    map.on('resize', updateSvgOverlay);
+
+    // Create Navigation Puck (Vehicle marker)
     const puckEl = document.createElement('div');
     puckEl.style.display = 'flex';
     puckEl.style.flexDirection = 'column';
     puckEl.style.alignItems = 'center';
-    puckEl.style.transform = 'translate(-50%, -50%)';
     puckEl.style.pointerEvents = 'none';
 
-    // Circular white puck with blue border
     const circle = document.createElement('div');
     circle.style.width = '42px';
     circle.style.height = '42px';
     circle.style.borderRadius = '50%';
     circle.style.background = '#ffffff';
-    circle.style.boxShadow = '0 4px 18px rgba(0,0,0,0.35), 0 0 0 3px rgba(26,115,232,0.45)';
+    circle.style.boxShadow = '0 4px 18px rgba(0,0,0,0.4), 0 0 0 3px rgba(26,115,232,0.6)';
     circle.style.display = 'flex';
     circle.style.alignItems = 'center';
     circle.style.justifyContent = 'center';
 
-    // SVG Blue Navigation Chevron
     circle.innerHTML = `
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="cg-puck-svg" style="transition: transform 0.15s ease-out;">
         <path d="M12 2L4 20L12 16L20 20L12 2Z" fill="#1a73e8" stroke="#174ea6" stroke-width="1.5" stroke-linejoin="round"/>
       </svg>
     `;
 
-    // Street pill chip below puck
     const pill = document.createElement('span');
     pill.style.marginTop = '4px';
     pill.style.padding = '2px 8px';
@@ -315,40 +421,27 @@ export default function MapLibreNavMap({
     };
   }, []);
 
-  // Update Route Polyline & Bounds whenever routeCoordinates or emergency changes
+  // Update Route Polyline whenever routeCoordinates or emergency changes
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    routeIndexRef.current = 0; // Reset progress for new route
+    routeIndexRef.current = 0;
 
     if (routeCoordinates && routeCoordinates.length > 0) {
       const firstPt = routeCoordinates[0];
       if (puckMarkerRef.current && Array.isArray(firstPt)) {
         puckMarkerRef.current.setLngLat(firstPt);
-        map.jumpTo({ center: firstPt });
       }
     }
 
     drawOrUpdateRoute(map, routeCoordinates, isEmergency);
+    updateSvgOverlay();
 
-    const onStyleData = () => drawOrUpdateRoute(map, routeCoordinates, isEmergency);
-    map.on('styledata', onStyleData);
-    map.on('load', onStyleData);
-
-    if (routeCoordinates && routeCoordinates.length > 1) {
-      try {
-        const bounds = new maplibregl.LngLatBounds();
-        routeCoordinates.forEach((c) => bounds.extend(c));
-        map.fitBounds(bounds, { padding: { top: 70, bottom: 90, left: 40, right: 40 }, maxZoom: 15 });
-      } catch (e) {}
+    if (!isNavigating) {
+      fitOverviewBounds();
     }
-
-    return () => {
-      map.off('styledata', onStyleData);
-      map.off('load', onStyleData);
-    };
-  }, [routeCoordinates, isEmergency, drawOrUpdateRoute]);
+  }, [routeCoordinates, isEmergency, isNavigating, drawOrUpdateRoute, fitOverviewBounds, updateSvgOverlay]);
 
   // Update street pill text
   useEffect(() => {
@@ -357,71 +450,160 @@ export default function MapLibreNavMap({
     }
   }, [currentStreet]);
 
-  // Destination Marker
+  // -------------------------------------------------------------
+  // MARKERS: START (ORIGIN), DROP (DESTINATION), & ALL FACILITIES
+  // -------------------------------------------------------------
+
+  // 1. START / ORIGIN MARKER (🟢)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !destinationCoord) return;
+    if (!map) return;
+
+    const startPt = originCoord || (routeCoordinates.length > 0 ? routeCoordinates[0] : null);
+    if (!startPt) return;
+
+    const shortOrigin = originName.split(',')[0];
+
+    if (!startMarkerRef.current) {
+      const el = document.createElement('div');
+      el.innerHTML = `
+        <div style="background:#16a34a;color:#ffffff;padding:5px 11px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 16px rgba(22,163,74,0.6);border:2px solid #ffffff;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">
+          <span style="font-size:13px;">🟢</span> <span>START: ${shortOrigin}</span>
+        </div>
+      `;
+      startMarkerRef.current = new maplibregl.Marker({ element: el })
+        .setLngLat(startPt)
+        .addTo(map);
+    } else {
+      startMarkerRef.current.setLngLat(startPt);
+    }
+  }, [originCoord, originName, routeCoordinates]);
+
+  // 2. DROP / DESTINATION MARKER (📍)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const destPt = destinationCoord || (routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1] : null);
+    if (!destPt) return;
+
+    const shortDest = destinationName.split(',')[0];
 
     if (!destMarkerRef.current) {
       const el = document.createElement('div');
       el.innerHTML = `
-        <div style="background:#dc2626;color:#fff;padding:5px 10px;border-radius:12px;font-size:11px;font-weight:800;box-shadow:0 4px 14px rgba(0,0,0,0.35);border:2px solid #fff;display:flex;align-items:center;gap:4px;">
-          <span>🏥</span> <span>${destinationName}</span>
+        <div style="background:#dc2626;color:#ffffff;padding:5px 11px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 16px rgba(220,38,38,0.6);border:2px solid #ffffff;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">
+          <span style="font-size:13px;">📍</span> <span>DROP: ${shortDest}</span>
         </div>
       `;
       destMarkerRef.current = new maplibregl.Marker({ element: el })
-        .setLngLat(destinationCoord)
+        .setLngLat(destPt)
         .addTo(map);
     } else {
-      destMarkerRef.current.setLngLat(destinationCoord);
+      destMarkerRef.current.setLngLat(destPt);
     }
-  }, [destinationCoord, destinationName]);
+  }, [destinationCoord, destinationName, routeCoordinates]);
 
-  // Emergency Facility Marker
+  // 3. ALL FACILITIES ACROSS GOA (❄️)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Clear previous facility markers
+    facMarkersRef.current.forEach((m) => m.remove());
+    facMarkersRef.current = [];
+
+    if (!facilities || facilities.length === 0) return;
+
+    const newMarkers: maplibregl.Marker[] = [];
+
+    facilities.forEach((f) => {
+      if (!f.latitude || !f.longitude) return;
+
+      // Don't duplicate exact start or drop points if within ~150 meters
+      if (originCoord && Math.abs(f.latitude - originCoord[1]) < 0.002 && Math.abs(f.longitude - originCoord[0]) < 0.002) {
+        return;
+      }
+      if (destinationCoord && Math.abs(f.latitude - destinationCoord[1]) < 0.002 && Math.abs(f.longitude - destinationCoord[0]) < 0.002) {
+        return;
+      }
+
+      const shortName = f.name
+        .split(',')[0]
+        .replace('Community Health & Specialty Center', 'CHC')
+        .replace('Community Health Center', 'CHC')
+        .replace('Sub District Hospital', 'SDH')
+        .replace('Sub-District Hospital', 'SDH');
+
+      const el = document.createElement('div');
+      el.innerHTML = `
+        <div style="background:rgba(15,23,42,0.92);color:#c084fc;padding:3.5px 8px;border-radius:12px;font-size:10px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,0.5);border:1.5px solid #a855f7;display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;transition:transform 0.15s ease;">
+          <span style="font-size:11px;">❄️</span> <span>${shortName}</span>
+        </div>
+      `;
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([f.longitude, f.latitude])
+        .addTo(map);
+
+      newMarkers.push(marker);
+    });
+
+    facMarkersRef.current = newMarkers;
+
+    return () => {
+      newMarkers.forEach((m) => m.remove());
+    };
+  }, [facilities, originCoord, destinationCoord]);
+
+  // 4. ACTIVE EMERGENCY FACILITY TARGET (⚠️)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     if (facilityCoord && (isEmergency || isNavigating)) {
-      if (!facMarkerRef.current) {
+      const shortFac = facilityName.split(',')[0];
+      if (!emergMarkerRef.current) {
         const el = document.createElement('div');
         el.innerHTML = `
-          <div style="background:#7c3aed;color:#fff;padding:5px 10px;border-radius:12px;font-size:11px;font-weight:800;box-shadow:0 4px 14px rgba(124,58,237,0.5);border:2px solid #fff;display:flex;align-items:center;gap:4px;animation:cgPulse 1.2s infinite;">
-            <span>❄️</span> <span>${facilityName}</span>
+          <div style="background:#7c3aed;color:#fff;padding:6px 12px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 20px rgba(124,58,237,0.7);border:2px solid #fff;display:flex;align-items:center;gap:5px;animation:cgPulse 1.2s infinite;white-space:nowrap;">
+            <span>❄️ EMERGENCY VAULT:</span> <span>${shortFac}</span>
           </div>
         `;
-        facMarkerRef.current = new maplibregl.Marker({ element: el })
+        emergMarkerRef.current = new maplibregl.Marker({ element: el })
           .setLngLat(facilityCoord)
           .addTo(map);
       } else {
-        facMarkerRef.current.setLngLat(facilityCoord);
+        emergMarkerRef.current.setLngLat(facilityCoord);
       }
     } else {
-      if (facMarkerRef.current) {
-        facMarkerRef.current.remove();
-        facMarkerRef.current = null;
+      if (emergMarkerRef.current) {
+        emergMarkerRef.current.remove();
+        emergMarkerRef.current = null;
       }
     }
   }, [facilityCoord, isEmergency, isNavigating, facilityName]);
 
   // -------------------------------------------------------------
   // HIGH-PERFORMANCE FLUID DRIVING ENGINE
-  // Authentic ~60 km/h cruising with real-time turn detection!
+  // Calibrated ~60 km/h cruising pace along highway
   // -------------------------------------------------------------
   useEffect(() => {
     if (!isNavigating) {
       if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
       setCurrentSpeed(0);
+      setCameraMode('overview');
       return;
     }
 
+    setCameraMode('drive');
     const map = mapRef.current;
     if (!map) return;
 
     map.easeTo({
       pitch: 56,
       zoom: 16.5,
-      duration: 500,
+      duration: 600,
     });
 
     let lastTime = performance.now();
@@ -437,11 +619,11 @@ export default function MapLibreNavMap({
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
 
-      // Realistic speed ~58-62 km/h
+      // Realistic cruising speed ~58-62 km/h
       const speed = 58 + Math.sin(now / 1400) * 3 + Math.random() * 1.5;
 
       const isEmerg = isEmergencyRef.current;
-      // Steady, realistic vehicular pace: 0.75 pts/sec (never too fast!)
+      // Steady, realistic vehicular pace: 0.75 pts/sec
       const stepRate = isEmerg ? 1.05 : 0.75;
 
       let idx = routeIndexRef.current + dt * stepRate;
@@ -487,18 +669,19 @@ export default function MapLibreNavMap({
           arrowSvgRef.current.style.transform = `rotate(${bearing}deg)`;
         }
 
-        // Camera follow
-        map.jumpTo({
-          center: [lng, lat],
-          bearing: bearing,
-        });
+        // Camera follow only when in drive mode
+        if (cameraModeRef.current === 'drive') {
+          map.jumpTo({
+            center: [lng, lat],
+            bearing: bearing,
+          });
+        }
 
         // Throttled update to React HUD (every 1 second)
         if (now - lastThrottledUpdate > 1000) {
           lastThrottledUpdate = now;
           setCurrentSpeed(Math.round(speed));
 
-          // Dynamic remaining distance & ETA calculation
           const totalPts = coords.length - 1;
           const remainingPts = Math.max(0, totalPts - baseIdx);
           const remKm = Math.max(0.1, (remainingPts * 0.05)).toFixed(1);
@@ -537,7 +720,6 @@ export default function MapLibreNavMap({
               }
             }
           } else {
-            // Fallback dynamic turn based on remaining distance
             const turnM = Math.max(50, (remainingPts % 12 + 1) * 60);
             setActiveStepDist(`${turnM} m`);
             setActiveTurnIcon(isEmerg ? '↱' : '↗');
@@ -560,15 +742,75 @@ export default function MapLibreNavMap({
     };
   }, [isNavigating, facilityName, destinationName]);
 
+  // Toggle Camera Mode between Driving 3D and Overview
+  const toggleCameraMode = () => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (cameraMode === 'drive') {
+      setCameraMode('overview');
+      fitOverviewBounds();
+    } else {
+      setCameraMode('drive');
+      const coords = routeCoordsRef.current;
+      const idx = Math.floor(routeIndexRef.current);
+      const currentPt = coords && coords[idx] ? coords[idx] : [73.856, 15.4647];
+      map.easeTo({
+        center: currentPt as [number, number],
+        pitch: 56,
+        zoom: 16.5,
+        duration: 700,
+      });
+    }
+  };
+
+  const handleZoomIn = () => {
+    if (mapRef.current) mapRef.current.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    if (mapRef.current) mapRef.current.zoomOut();
+  };
+
   return (
     <div className={`relative ${className} overflow-hidden bg-slate-900`}>
-      {/* MapLibre 3D Canvas */}
+      {/* MapLibre 3D WebGL Canvas */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* Floating Google Maps Turn Banner (Dynamic, Real turn maneuvers) */}
+      {/* Synchronized SVG Polyline Overlay (100% Guaranteed Blue Line) */}
+      <svg
+        className="absolute inset-0 w-full h-full pointer-events-none"
+        style={{ zIndex: 2 }}
+      >
+        {svgPathD && (
+          <>
+            {/* Deep Navy Outer Casing for Depth */}
+            <path
+              d={svgPathD}
+              fill="none"
+              stroke="#174ea6"
+              strokeWidth={12}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={0.95}
+            />
+            {/* Vibrant Electric Blue Core */}
+            <path
+              d={svgPathD}
+              fill="none"
+              stroke={isEmergency ? '#dc2626' : '#1a73e8'}
+              strokeWidth={7.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={1}
+            />
+          </>
+        )}
+      </svg>
+
+      {/* Floating Google Maps Turn Banner */}
       <div className="absolute top-3 left-3 right-3 z-10 pointer-events-none flex justify-center">
         <div className="bg-[#1a73e8] text-white backdrop-blur-md px-3.5 py-2.5 rounded-2xl shadow-xl shadow-blue-950/40 border border-blue-300/40 flex items-center gap-3 max-w-sm w-full">
-          {/* Turn Icon Pill */}
           <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-xl font-black shrink-0">
             {activeTurnIcon}
           </div>
@@ -591,17 +833,57 @@ export default function MapLibreNavMap({
         </div>
       </div>
 
+      {/* Floating Map View Controls (Bottom-Right) */}
+      <div className="absolute bottom-28 right-3 z-20 flex flex-col gap-2 pointer-events-auto">
+        {/* Toggle Overview vs 3D Drive */}
+        <button
+          onClick={toggleCameraMode}
+          className="bg-slate-900/90 hover:bg-slate-800 text-white text-[11px] font-extrabold px-3 py-1.5 rounded-xl border border-slate-700 shadow-xl backdrop-blur-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+          title="Toggle Full Route Overview vs 3D Drive View"
+        >
+          <span>{cameraMode === 'drive' ? '🗺️' : '🧭'}</span>
+          <span>{cameraMode === 'drive' ? 'Overview' : '3D Drive'}</span>
+        </button>
+
+        {/* Fit Entire Route across Goa */}
+        <button
+          onClick={fitOverviewBounds}
+          className="w-9 h-9 bg-slate-900/90 hover:bg-slate-800 text-white text-xs font-black rounded-xl border border-slate-700 shadow-xl backdrop-blur-md flex items-center justify-center cursor-pointer transition-all active:scale-95 self-end"
+          title="Fit Entire Route across Goa"
+        >
+          ⛶
+        </button>
+
+        {/* Zoom In / Out */}
+        <div className="bg-slate-900/90 rounded-xl border border-slate-700 shadow-xl backdrop-blur-md flex flex-col overflow-hidden self-end">
+          <button
+            onClick={handleZoomIn}
+            className="w-9 h-8 hover:bg-slate-800 text-white text-base font-black flex items-center justify-center cursor-pointer border-b border-slate-700/60 transition-all active:scale-95"
+            title="Zoom In"
+          >
+            +
+          </button>
+          <button
+            onClick={handleZoomOut}
+            className="w-9 h-8 hover:bg-slate-800 text-white text-base font-black flex items-center justify-center cursor-pointer transition-all active:scale-95"
+            title="Zoom Out"
+          >
+            −
+          </button>
+        </div>
+      </div>
+
       {/* Live Speedometer (Bottom-Left like Google Maps / Waze) */}
-      <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex flex-col items-center">
+      <div className="absolute bottom-24 left-4 z-10 pointer-events-none flex flex-col items-center">
         <div className="w-13 h-13 px-2.5 py-1 rounded-full bg-white/95 backdrop-blur-md border-2 border-blue-600 shadow-xl flex flex-col items-center justify-center text-slate-900">
           <span className="text-base font-black leading-none font-mono">{currentSpeed}</span>
           <span className="text-[8px] font-extrabold text-slate-500 uppercase tracking-tighter">km/h</span>
         </div>
       </div>
 
-      {/* Live ETA Badge (Bottom-Center above dock, Google Maps style) */}
+      {/* Live ETA Badge (Bottom-Center above dock) */}
       {isNavigating && (
-        <div className="absolute bottom-16 left-0 right-0 z-10 pointer-events-none flex justify-center">
+        <div className="absolute bottom-24 left-0 right-0 z-10 pointer-events-none flex justify-center">
           <div className="bg-slate-900/90 text-white backdrop-blur-md px-3.5 py-1 rounded-full border border-slate-700 shadow-lg flex items-center gap-2 text-[11px] font-bold">
             <span className="text-emerald-400">● {etaMinutes} min</span>
             <span className="text-slate-400">({remainingKm} km)</span>

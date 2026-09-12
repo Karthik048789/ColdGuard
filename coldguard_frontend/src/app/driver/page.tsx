@@ -90,6 +90,7 @@ export default function DriverPage() {
   const [currentStreet, setCurrentStreet] = useState<string>('NH 66 Panaji-Margao Hwy');
   const [nextStep, setNextStep] = useState<any>(null);
   const [emergencyFacility, setEmergencyFacility] = useState<NearbyFacility | null>(null);
+  const [facilities, setFacilities] = useState<any[]>([]);
   const [isAtFacility, setIsAtFacility] = useState<boolean>(false);
 
   const [loading, setLoading] = useState(false);
@@ -151,6 +152,7 @@ export default function DriverPage() {
     setTelemetry(null);
     setDriverStatus('idle');
     setAlerts([]);
+    setFacilities([]);
     setRouteCoordinates([]);
     setActionMsg('');
   };
@@ -189,6 +191,14 @@ export default function DriverPage() {
 
     (async () => {
       try {
+        // Fetch all Goa cold storage facilities
+        fetch(`${API}/facilities`, { headers: { Authorization: `Bearer ${token}` } })
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.success && Array.isArray(d.data)) setFacilities(d.data);
+          })
+          .catch(console.error);
+
         const meRes = await fetch(`${API}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -589,15 +599,22 @@ export default function DriverPage() {
           isEmergency={isEmergency}
           currentStreet={currentStreet}
           nextStep={nextStep}
-          destinationCoord={
-            shipment?.destination_lng && shipment?.destination_lat
-              ? [shipment.destination_lng, shipment.destination_lat]
+          originCoord={
+            shipment?.origin_lng && shipment?.origin_lat
+              ? [Number(shipment.origin_lng), Number(shipment.origin_lat)]
               : null
           }
-          destinationName={shipment?.destination_name?.split(',')[0]}
+          originName={shipment?.origin_name || 'GMC Bambolim Central Vault'}
+          destinationCoord={
+            shipment?.destination_lng && shipment?.destination_lat
+              ? [Number(shipment.destination_lng), Number(shipment.destination_lat)]
+              : null
+          }
+          destinationName={shipment?.destination_name || 'South Goa District Hospital'}
+          facilities={facilities}
           facilityCoord={
             emergencyFacility?.longitude && emergencyFacility?.latitude
-              ? [emergencyFacility.longitude, emergencyFacility.latitude]
+              ? [Number(emergencyFacility.longitude), Number(emergencyFacility.latitude)]
               : null
           }
           facilityName={emergencyFacility?.name}
