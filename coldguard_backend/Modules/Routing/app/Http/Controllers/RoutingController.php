@@ -4,56 +4,79 @@ namespace Modules\Routing\App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Modules\Routing\App\Services\RoutingService;
+use Modules\Shipment\App\Models\Shipment;
 
 class RoutingController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
-    {
-        //
+    protected RoutingService $routingService;
 
-        return response()->json([]);
+    public function __construct(RoutingService $routingService)
+    {
+        $this->routingService = $routingService;
     }
 
     /**
-     * Store a newly created resource in storage.
+     * GET /api/shipments/{id}/location
+     * Retrieve the latest known live truck location and sensor telemetry for a shipment.
      */
-    public function store(Request $request)
+    public function location(int $id): JsonResponse
     {
-        //
+        $shipment = Shipment::find($id);
 
-        return response()->json([]);
+        if (!$shipment) {
+            return response()->json([
+                'success' => false,
+                'message' => "Shipment with ID {$id} not found."
+            ], 404);
+        }
+
+        $result = $this->routingService->getLiveLocation($shipment);
+
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message']
+            ], 400);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $result['data']
+        ], 200);
     }
 
     /**
-     * Show the specified resource.
+     * GET /api/shipments/{id}/route
+     * Calculate multi-waypoint road route (Truck -> Emergency Facility -> Receiver) via OSRM.
      */
-    public function show($id)
+    public function route(Request $request, int $id): JsonResponse
     {
-        //
+        $shipment = Shipment::find($id);
 
-        return response()->json([]);
-    }
+        if (!$shipment) {
+            return response()->json([
+                'success' => false,
+                'message' => "Shipment with ID {$id} not found."
+            ], 404);
+        }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, $id)
-    {
-        //
+        $facilityId = $request->query('facility_id') ? (int) $request->query('facility_id') : null;
 
-        return response()->json([]);
-    }
+        $result = $this->routingService->calculateRoute($shipment, $facilityId);
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy($id)
-    {
-        //
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message']
+            ], 400);
+        }
 
-        return response()->json([]);
+        return response()->json([
+            'success' => true,
+            'message' => $result['message'],
+            'data' => $result['data']
+        ], 200);
     }
 }

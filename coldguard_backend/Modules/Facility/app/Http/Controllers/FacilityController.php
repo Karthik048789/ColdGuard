@@ -4,56 +4,62 @@ namespace Modules\Facility\App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Modules\Facility\App\Services\FacilityService;
+use Modules\Shipment\App\Models\Shipment;
 
 class FacilityController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
-    {
-        //
+    protected FacilityService $facilityService;
 
-        return response()->json([]);
+    public function __construct(FacilityService $facilityService)
+    {
+        $this->facilityService = $facilityService;
     }
 
     /**
-     * Store a newly created resource in storage.
+     * GET /api/facilities
+     * List all cold-storage facilities, optionally filtered by status.
      */
-    public function store(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        //
+        $status = $request->query('status');
+        $facilities = $this->facilityService->getAllFacilities($status);
 
-        return response()->json([]);
+        return response()->json([
+            'success' => true,
+            'data' => $facilities,
+        ], 200);
     }
 
     /**
-     * Show the specified resource.
+     * GET /api/shipments/{id}/facilities/eligible
+     * Retrieve eligible cold-storage facilities ranked by approximate distance for a shipment.
      */
-    public function show($id)
+    public function eligible(int $id): JsonResponse
     {
-        //
+        $shipment = Shipment::find($id);
 
-        return response()->json([]);
-    }
+        if (!$shipment) {
+            return response()->json([
+                'success' => false,
+                'message' => "Shipment with ID {$id} not found."
+            ], 404);
+        }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, $id)
-    {
-        //
+        $result = $this->facilityService->getEligibleFacilitiesForShipment($shipment);
 
-        return response()->json([]);
-    }
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'],
+            ], 400);
+        }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy($id)
-    {
-        //
-
-        return response()->json([]);
+        return response()->json([
+            'success' => true,
+            'message' => $result['message'],
+            'data' => $result['data']
+        ], 200);
     }
 }

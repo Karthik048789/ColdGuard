@@ -48,5 +48,6 @@ class DatabaseSeeder extends Seeder
 
         // Seed Healthcare Demo Shipments
         $this->call(\Modules\Shipment\Database\Seeders\ShipmentDatabaseSeeder::class);
+        $this->call(FacilitySeeder::class);
     }
 }
