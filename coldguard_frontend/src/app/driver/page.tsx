@@ -727,15 +727,19 @@ export default function DriverPage() {
           originCoord={
             shipment?.origin_lng && shipment?.origin_lat
               ? [Number(shipment.origin_lng), Number(shipment.origin_lat)]
+              : routeCoordinates.length > 0
+              ? routeCoordinates[0]
               : null
           }
-          originName={shipment?.origin_name || 'GMC Bambolim Central Vault'}
+          originName={shipment?.origin_name || 'Sub District Hospital, Ponda'}
           destinationCoord={
             shipment?.destination_lng && shipment?.destination_lat
               ? [Number(shipment.destination_lng), Number(shipment.destination_lat)]
+              : routeCoordinates.length > 0
+              ? routeCoordinates[routeCoordinates.length - 1]
               : null
           }
-          destinationName={shipment?.destination_name || 'South Goa District Hospital'}
+          destinationName={shipment?.destination_name || 'North Goa District Hospital, Mapusa'}
           facilities={facilities}
           facilityCoord={
             emergencyFacility?.longitude && emergencyFacility?.latitude
