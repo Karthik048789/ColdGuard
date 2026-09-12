@@ -34,6 +34,8 @@ export default function LeafletMap({
   const mapRef = useRef<any>(null);
   const layersRef = useRef<any>(null);
   const clickHandlerRef = useRef<any>(null);
+  const hasFitBoundsRef = useRef<boolean>(false);
+  const lastRouteSigRef = useRef<string>('');
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return;
@@ -83,6 +85,15 @@ export default function LeafletMap({
         map.on('click', clickHandlerRef.current);
       }
 
+      // Check if route changed to re-fit bounds
+      const routeSig = routeCoordinates && routeCoordinates.length > 0
+        ? `${routeCoordinates[0][0]}_${routeCoordinates.length}`
+        : '';
+      if (routeSig !== lastRouteSigRef.current) {
+        lastRouteSigRef.current = routeSig;
+        hasFitBoundsRef.current = false;
+      }
+
       // Clear previous markers & polylines
       layerGroup.clearLayers();
 
@@ -94,26 +105,44 @@ export default function LeafletMap({
         const latLng = L.latLng(m.lat, m.lng);
         bounds.extend(latLng);
 
-        let iconUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png';
+        let marker: any;
         if (m.type === 'truck') {
-          iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png';
-        } else if (m.type === 'facility') {
-          iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png';
-        } else if (m.type === 'destination' || m.type === 'pin') {
-          iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png';
-        } else if (m.type === 'origin') {
-          iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png';
+          const truckDivIcon = L.divIcon({
+            className: 'cg-live-truck-marker',
+            html: `
+              <div style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer;">
+                <div style="width: 32px; height: 32px; border-radius: 50%; background: #dc2626; border: 2.5px solid #ffffff; box-shadow: 0 4px 14px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-size: 16px; z-index: 10;">
+                  🚛
+                </div>
+                <div style="background: rgba(15, 23, 42, 0.95); color: #ffffff; font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 8px; margin-top: 2px; white-space: nowrap; border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
+                  LIVE TRUCK
+                </div>
+              </div>
+            `,
+            iconSize: [40, 52],
+            iconAnchor: [20, 26],
+            popupAnchor: [0, -26],
+          });
+          marker = L.marker(latLng, { icon: truckDivIcon, zIndexOffset: 1000 });
+        } else {
+          let iconUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png';
+          if (m.type === 'facility') {
+            iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png';
+          } else if (m.type === 'destination' || m.type === 'pin') {
+            iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png';
+          } else if (m.type === 'origin') {
+            iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png';
+          }
+
+          const customIcon = L.icon({
+            iconUrl,
+            shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+          });
+          marker = L.marker(latLng, { icon: customIcon });
         }
-
-        const customIcon = L.icon({
-          iconUrl,
-          shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-        });
-
-        const marker = L.marker(latLng, { icon: customIcon });
         marker.bindPopup(`
           <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4;">
             <b style="color: #0f172a;">${m.title}</b>
@@ -133,10 +162,14 @@ export default function LeafletMap({
         });
         layerGroup.addLayer(polyline);
 
-        // Fit to polyline
-        map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
-      } else if (markers.length > 0 && bounds.isValid()) {
+        // Only fit bounds on initial load or route change to avoid disrupting user zoom during live tracking
+        if (!hasFitBoundsRef.current) {
+          map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+          hasFitBoundsRef.current = true;
+        }
+      } else if (markers.length > 0 && bounds.isValid() && !hasFitBoundsRef.current) {
         map.fitBounds(bounds, { padding: [35, 35] });
+        hasFitBoundsRef.current = true;
       }
 
       // Ensure map tiles properly display on resize

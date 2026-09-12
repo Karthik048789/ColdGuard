@@ -193,6 +193,57 @@ export default function ManagerDashboard() {
     loadDashboardData();
   }, []);
 
+  // Live polling for selected active shipment telemetry & vehicle position
+  useEffect(() => {
+    if (!selectedShipment) return;
+    if (selectedShipment.status === 'DELIVERED') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiFetch<any>(`/shipments/${selectedShipment.id}`);
+        if (res?.success && res?.data) {
+          const fresh = res.data?.shipment || res.data;
+          // Only update if coordinates, temp, or status changed
+          setSelectedShipment((prev) => {
+            if (!prev || prev.id !== fresh.id) return prev;
+            if (
+              prev.current_lat === fresh.current_lat &&
+              prev.current_lng === fresh.current_lng &&
+              prev.current_temp === fresh.current_temp &&
+              prev.status === fresh.status
+            ) {
+              return prev;
+            }
+            return {
+              ...prev,
+              current_lat: fresh.current_lat,
+              current_lng: fresh.current_lng,
+              current_temp: fresh.current_temp,
+              status: fresh.status,
+            };
+          });
+
+          // Also keep the shipment in the shipments list up to date
+          setShipments((prev) =>
+            prev.map((s) =>
+              s.id === fresh.id
+                ? {
+                    ...s,
+                    current_lat: fresh.current_lat,
+                    current_lng: fresh.current_lng,
+                    current_temp: fresh.current_temp,
+                    status: fresh.status,
+                  }
+                : s
+            )
+          );
+        }
+      } catch {}
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [selectedShipment?.id, selectedShipment?.status]);
+
   // User clicks a shipment in the list
   const handleSelectShipment = (shipment: Shipment) => {
     setSelectedShipment(shipment);

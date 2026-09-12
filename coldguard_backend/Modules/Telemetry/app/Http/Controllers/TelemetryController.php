@@ -33,7 +33,7 @@ class TelemetryController extends Controller
             'battery' => 'required|numeric|between:0,100',
             'latitude' => 'required|numeric|between:-90,90',
             'longitude' => 'required|numeric|between:-180,180',
-            'recorded_at' => 'required|date',
+            'recorded_at' => 'nullable|date',
         ]);
 
         $telemetry = Telemetry::create([
@@ -43,7 +43,7 @@ class TelemetryController extends Controller
             'battery' => $validated['battery'],
             'latitude' => $validated['latitude'],
             'longitude' => $validated['longitude'],
-            'recorded_at' => Carbon::parse($validated['recorded_at']),
+            'recorded_at' => !empty($validated['recorded_at']) ? Carbon::parse($validated['recorded_at']) : Carbon::now(),
             'is_anomaly' => ($validated['temperature'] < $shipment->min_temp || $validated['temperature'] > $shipment->max_temp),
         ]);
 

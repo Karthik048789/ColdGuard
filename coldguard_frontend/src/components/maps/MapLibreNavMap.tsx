@@ -34,6 +34,7 @@ export interface NavMapProps {
   facilityCoord?: [number, number] | null;
   facilityName?: string;
   facilities?: FacilityItem[];
+  currentCoord?: [number, number] | null;
   onLocationUpdate?: (lng: number, lat: number, speed: number) => void;
   onArrival?: () => void;
   className?: string;
@@ -57,6 +58,22 @@ function createCartoStyle(): maplibregl.StyleSpecification {
         tileSize: 256,
         attribution: '&copy; CARTO &copy; OpenStreetMap contributors',
       },
+      'route-source': {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: [],
+              },
+            },
+          ],
+        },
+      },
     },
     layers: [
       {
@@ -66,8 +83,46 @@ function createCartoStyle(): maplibregl.StyleSpecification {
         minzoom: 0,
         maxzoom: 20,
       },
+      {
+        id: 'route-casing',
+        type: 'line',
+        source: 'route-source',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#174ea6',
+          'line-width': 12,
+          'line-opacity': 0.95,
+        },
+      },
+      {
+        id: 'route-line',
+        type: 'line',
+        source: 'route-source',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#1a73e8',
+          'line-width': 7.5,
+          'line-opacity': 1,
+        },
+      },
     ],
   };
+}
+
+function findClosestPointIndex(coords: [number, number][], target: [number, number]): number {
+  if (!coords || coords.length === 0 || !target || target.length < 2) return 0;
+  let closestIdx = 0;
+  let minDiff = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const dLng = coords[i][0] - target[0];
+    const dLat = coords[i][1] - target[1];
+    const distSq = dLng * dLng + dLat * dLat;
+    if (distSq < minDiff) {
+      minDiff = distSq;
+      closestIdx = i;
+    }
+  }
+  return closestIdx;
 }
 
 function calculateBearing(lng1: number, lat1: number, lng2: number, lat2: number): number {
@@ -107,6 +162,7 @@ export default function MapLibreNavMap({
   facilityCoord,
   facilityName = 'Cold Storage Facility',
   facilities = [],
+  currentCoord,
   onLocationUpdate,
   onArrival,
   className = 'w-full h-full',
@@ -185,17 +241,13 @@ export default function MapLibreNavMap({
       } catch {}
     } else if (map.isStyleLoaded()) {
       try {
-        map.addSource('route-source', {
-          type: 'geojson',
-          data: geojson,
-        });
-      } catch {}
-    }
-
-    if (map.isStyleLoaded()) {
-      // 1. Deep Navy Outer Casing
-      if (!map.getLayer('route-casing')) {
-        try {
+        if (!map.getSource('route-source')) {
+          map.addSource('route-source', {
+            type: 'geojson',
+            data: geojson,
+          });
+        }
+        if (!map.getLayer('route-casing')) {
           map.addLayer({
             id: 'route-casing',
             type: 'line',
@@ -207,11 +259,8 @@ export default function MapLibreNavMap({
               'line-opacity': 0.95,
             },
           });
-        } catch {}
-      }
-      // 2. Electric Blue Core (or Emergency Crimson)
-      if (!map.getLayer('route-line')) {
-        try {
+        }
+        if (!map.getLayer('route-line')) {
           map.addLayer({
             id: 'route-line',
             type: 'line',
@@ -223,20 +272,17 @@ export default function MapLibreNavMap({
               'line-opacity': 1,
             },
           });
-        } catch {}
-      }
-
-      try {
-        if (map.getLayer('route-line')) {
-          map.setPaintProperty('route-line', 'line-color', emergency ? '#dc2626' : '#1a73e8');
-        }
-        if (map.getLayer('route-casing')) {
-          map.setPaintProperty('route-casing', 'line-color', emergency ? '#7f1d1d' : '#174ea6');
         }
       } catch {}
     }
 
     try {
+      if (map.getLayer('route-line')) {
+        map.setPaintProperty('route-line', 'line-color', emergency ? '#dc2626' : '#1a73e8');
+      }
+      if (map.getLayer('route-casing')) {
+        map.setPaintProperty('route-casing', 'line-color', emergency ? '#7f1d1d' : '#174ea6');
+      }
       map.triggerRepaint();
     } catch {}
   }, []);
@@ -373,26 +419,39 @@ export default function MapLibreNavMap({
     };
   }, []);
 
-  // Update Route Polyline whenever routeCoordinates or emergency changes
+  const prevRouteKeyRef = useRef<string>('');
+
+  // Update Route Polyline and handle route position without jumping back to origin on stop
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    routeIndexRef.current = 0;
+    const routeKey = routeCoordinates && routeCoordinates.length > 0
+      ? `${routeCoordinates[0][0]}_${routeCoordinates[0][1]}_${routeCoordinates[routeCoordinates.length - 1][0]}_${routeCoordinates.length}`
+      : '';
 
-    if (routeCoordinates && routeCoordinates.length > 0) {
-      const firstPt = routeCoordinates[0];
-      if (puckMarkerRef.current && Array.isArray(firstPt)) {
-        puckMarkerRef.current.setLngLat(firstPt);
+    const isNewRoute = Boolean(routeKey && routeKey !== prevRouteKeyRef.current);
+    if (isNewRoute) {
+      prevRouteKeyRef.current = routeKey;
+
+      // If currentCoord is supplied, snap directly to that coordinate along the route
+      let startIdx = 0;
+      if (currentCoord && currentCoord.length >= 2) {
+        startIdx = findClosestPointIndex(routeCoordinates, currentCoord);
+      }
+      routeIndexRef.current = startIdx;
+
+      if (puckMarkerRef.current && routeCoordinates[startIdx]) {
+        puckMarkerRef.current.setLngLat(routeCoordinates[startIdx]);
       }
     }
 
     drawOrUpdateRoute(map, routeCoordinates, isEmergency);
 
-    if (!isNavigating) {
+    if (!isNavigating && isNewRoute) {
       fitOverviewBounds();
     }
-  }, [routeCoordinates, isEmergency, isNavigating, drawOrUpdateRoute, fitOverviewBounds]);
+  }, [routeCoordinates, isEmergency, currentCoord, drawOrUpdateRoute, fitOverviewBounds, isNavigating]);
 
   // Update street pill text
   useEffect(() => {
@@ -543,6 +602,13 @@ export default function MapLibreNavMap({
       if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
       setCurrentSpeed(0);
       setCameraMode('overview');
+
+      // Preserve stopped position and inform parent of exact halt coordinate
+      const coords = routeCoordsRef.current;
+      const idx = Math.floor(routeIndexRef.current);
+      if (coords && coords[idx] && onLocationUpdateRef.current) {
+        onLocationUpdateRef.current(coords[idx][0], coords[idx][1], 0);
+      }
       return;
     }
 

@@ -38,6 +38,15 @@ interface PresetDriver {
 
 const PRESET_DRIVERS: PresetDriver[] = [
   {
+    name: 'Suresh Nair',
+    email: 'suresh@coldguard.ai',
+    password: 'password123',
+    vehicle: 'Reefer Van GA-08-D-8910',
+    cargo: 'Polio & Rotavirus Vaccine',
+    route: 'SDH Ponda → Mapusa (Active)',
+    icon: '🚐',
+  },
+  {
     name: 'Rajesh Kumar',
     email: 'driver@coldguard.ai',
     password: 'password123',
@@ -45,15 +54,6 @@ const PRESET_DRIVERS: PresetDriver[] = [
     cargo: 'Covishield & Rabies Vaccine',
     route: 'GMC Bambolim → Margao',
     icon: '🚛',
-  },
-  {
-    name: 'Suresh Nair',
-    email: 'suresh@coldguard.ai',
-    password: 'password123',
-    vehicle: 'Reefer Van GA-08-D-8910',
-    cargo: 'Polio & Rotavirus Vaccine',
-    route: 'SDH Ponda → Mapusa',
-    icon: '🚐',
   },
   {
     name: 'Manoj Varma',
@@ -214,7 +214,7 @@ export default function DriverPage() {
         const sData = await sRes.json();
         const allShipments: any[] = sData.data?.shipments ?? [];
 
-        // Match shipment strictly assigned to this logged-in driver by the Logistics Manager!
+        // Match shipment assigned to this logged-in driver
         let assigned = allShipments.find((s: any) => {
           const sDriver = (s.driver_name || '').toLowerCase().trim();
           const uName = userName.toLowerCase().trim();
@@ -223,6 +223,13 @@ export default function DriverPage() {
             ['IN_TRANSIT', 'CREATED', 'WARNING', 'CRITICAL', 'REROUTED', 'DIVERTED'].includes(s.status)
           );
         });
+
+        // Fallback: If no assigned shipment for this exact driver, take the active consignment across Goa
+        if (!assigned) {
+          assigned = allShipments.find((s: any) =>
+            ['IN_TRANSIT', 'CREATED', 'WARNING', 'CRITICAL', 'REROUTED', 'DIVERTED'].includes(s.status)
+          );
+        }
 
         if (assigned) {
           setShipmentId(assigned.id);
@@ -272,6 +279,7 @@ export default function DriverPage() {
           battery: 91.0,
           latitude: lat,
           longitude: lng,
+          recorded_at: new Date().toISOString(),
         }),
       });
       setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
@@ -303,6 +311,7 @@ export default function DriverPage() {
               battery: 90.0,
               latitude: emergencyFacility.latitude,
               longitude: emergencyFacility.longitude,
+              recorded_at: new Date().toISOString(),
             }),
           });
         } catch {}
@@ -353,9 +362,32 @@ export default function DriverPage() {
     }
   };
 
-  const handleStop = () => {
+  const handleStop = async () => {
     setDriverStatus('idle');
-    setActionMsg('Vehicle stopped. Standby mode.');
+    setActionMsg('Vehicle stopped. Position saved in database.');
+
+    const tk = tokenRef.current;
+    const sid = shipmentIdRef.current;
+    const curLat = telemetry?.latitude ?? shipment?.current_lat ?? shipment?.origin_lat;
+    const curLng = telemetry?.longitude ?? shipment?.current_lng ?? shipment?.origin_lng;
+
+    if (tk && sid && curLat && curLng) {
+      try {
+        await fetch(`${API}/shipments/${sid}/telemetry`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            temperature: telemetry?.temperature ?? 4.0,
+            humidity: telemetry?.humidity ?? 62.0,
+            battery: telemetry?.battery ?? 89.0,
+            latitude: curLat,
+            longitude: curLng,
+            speed: 0,
+            recorded_at: new Date().toISOString(),
+          }),
+        });
+      } catch {}
+    }
   };
 
   const handleIncreaseTemp = async () => {
@@ -382,6 +414,7 @@ export default function DriverPage() {
           battery: 88.0,
           latitude: curLat,
           longitude: curLng,
+          recorded_at: new Date().toISOString(),
         }),
       });
 
@@ -424,8 +457,11 @@ export default function DriverPage() {
         // 4. Start navigating towards facility!
         setDriverStatus('emergency');
       } else {
-        setDriverStatus('emergency');
-        setActionMsg(`⚠️ Temp breach: ${newSpikeTemp}°C! Thermal anomaly recorded.`);
+        // No nearby facility found or available: "facility not there jut move nothing we can do"
+        setEmergencyFacility(null);
+        setDriverStatus('moving');
+        const destShort = (shipment?.destination_name || 'destination').split(',')[0];
+        setActionMsg(`⚠️ Temp breach: ${newSpikeTemp}°C! No facility nearby. Continuing transit to ${destShort}...`);
       }
     } catch {
       setActionMsg('Error triggering temperature failure.');
@@ -631,6 +667,13 @@ export default function DriverPage() {
           isEmergency={isEmergency}
           currentStreet={currentStreet}
           nextStep={nextStep}
+          currentCoord={
+            telemetry?.latitude && telemetry?.longitude
+              ? [Number(telemetry.longitude), Number(telemetry.latitude)]
+              : shipment?.current_lat && shipment?.current_lng
+              ? [Number(shipment.current_lng), Number(shipment.current_lat)]
+              : null
+          }
           originCoord={
             shipment?.origin_lng && shipment?.origin_lat
               ? [Number(shipment.origin_lng), Number(shipment.origin_lat)]
