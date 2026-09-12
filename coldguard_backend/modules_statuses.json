@@ -1,0 +1,10 @@
+{
+    "Shipment": true,
+    "Telemetry": true,
+    "RiskAnalysis": true,
+    "Facility": true,
+    "Routing": true,
+    "Passport": true,
+    "Blockchain": true,
+    "AI": true
+}

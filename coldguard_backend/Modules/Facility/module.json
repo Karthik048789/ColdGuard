@@ -1,0 +1,11 @@
+{
+    "name": "Facility",
+    "alias": "facility",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\Facility\\App\\Providers\\FacilityServiceProvider"
+    ],
+    "files": []
+}

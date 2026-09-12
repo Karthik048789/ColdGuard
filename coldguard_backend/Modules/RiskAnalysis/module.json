@@ -1,0 +1,11 @@
+{
+    "name": "RiskAnalysis",
+    "alias": "riskanalysis",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\RiskAnalysis\\App\\Providers\\RiskAnalysisServiceProvider"
+    ],
+    "files": []
+}
