@@ -41,60 +41,34 @@ export interface NavMapProps {
 
 const CARTO_KEY = 'cb1_3ig8_1_11956d158c962eee4dd04aed';
 
-const OSM_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'osm-tiles': {
-      type: 'raster',
-      tiles: [
-        `https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
-        `https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
-        `https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
-        `https://d.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
-      ],
-      tileSize: 256,
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    },
-    'route-source': {
-      type: 'geojson',
-      data: {
-        type: 'FeatureCollection',
-        features: [],
+// Fresh style factory per instance to prevent React 19 remount mutation bugs
+function createCartoStyle(): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      'carto-tiles': {
+        type: 'raster',
+        tiles: [
+          `https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
+          `https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
+          `https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
+          `https://d.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`,
+        ],
+        tileSize: 256,
+        attribution: '&copy; CARTO &copy; OpenStreetMap contributors',
       },
     },
-  },
-  layers: [
-    {
-      id: 'osm-tiles-layer',
-      type: 'raster',
-      source: 'osm-tiles',
-      minzoom: 0,
-      maxzoom: 20,
-    },
-    {
-      id: 'route-casing',
-      type: 'line',
-      source: 'route-source',
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: {
-        'line-color': '#174ea6',
-        'line-width': 12,
-        'line-opacity': 0.95,
+    layers: [
+      {
+        id: 'carto-tiles-layer',
+        type: 'raster',
+        source: 'carto-tiles',
+        minzoom: 0,
+        maxzoom: 20,
       },
-    },
-    {
-      id: 'route-line',
-      type: 'line',
-      source: 'route-source',
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: {
-        'line-color': '#1a73e8',
-        'line-width': 7.5,
-        'line-opacity': 1,
-      },
-    },
-  ],
-};
+    ],
+  };
+}
 
 function calculateBearing(lng1: number, lat1: number, lng2: number, lat2: number): number {
   const toRad = Math.PI / 180;
@@ -156,9 +130,6 @@ export default function MapLibreNavMap({
   const cameraModeRef = useRef<'drive' | 'overview'>('overview');
   cameraModeRef.current = cameraMode;
 
-  // SVG Polyline Path for 100% reliable visibility
-  const [svgPathD, setSvgPathD] = useState<string>('');
-
   // Animation & simulation refs
   const animIdRef = useRef<number | null>(null);
   const routeIndexRef = useRef<number>(0);
@@ -184,31 +155,9 @@ export default function MapLibreNavMap({
   const [activeStepDist, setActiveStepDist] = useState<string>('750 m');
   const [activeTurnIcon, setActiveTurnIcon] = useState<string>('↑');
 
-  // Synchronize SVG Polyline Overlay with MapLibre projected pixels
-  const updateSvgOverlay = useCallback(() => {
-    const map = mapRef.current;
-    const coords = routeCoordsRef.current;
-    if (!map || !coords || coords.length < 2) {
-      setSvgPathD('');
-      return;
-    }
-
-    try {
-      const pts = coords.map((c) => {
-        const p = map.project(c as [number, number]);
-        return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-      });
-      setSvgPathD('M ' + pts.join(' L '));
-    } catch {
-      setSvgPathD('');
-    }
-  }, []);
-
-  // Robust function to draw or update the route polyline on MapLibre GeoJSON layer
-  const drawOrUpdateRoute = useCallback((map: maplibregl.Map, coords: [number, number][], emergency: boolean) => {
-    if (!map || !coords || coords.length < 2) return;
-
-    const geojson: GeoJSON.FeatureCollection = {
+  // Convert raw coordinates to GeoJSON FeatureCollection
+  const makeGeoJson = (coords: [number, number][]): GeoJSON.FeatureCollection => {
+    return {
       type: 'FeatureCollection',
       features: [
         {
@@ -221,8 +170,15 @@ export default function MapLibreNavMap({
         },
       ],
     };
+  };
 
+  // Add or update route GeoJSON source and layers on MapLibre
+  const drawOrUpdateRoute = useCallback((map: maplibregl.Map, coords: [number, number][], emergency: boolean) => {
+    if (!map || !coords || coords.length < 2) return;
+
+    const geojson = makeGeoJson(coords);
     const source = map.getSource('route-source') as maplibregl.GeoJSONSource | undefined;
+
     if (source) {
       try {
         source.setData(geojson);
@@ -237,6 +193,7 @@ export default function MapLibreNavMap({
     }
 
     if (map.isStyleLoaded()) {
+      // 1. Deep Navy Outer Casing
       if (!map.getLayer('route-casing')) {
         try {
           map.addLayer({
@@ -252,6 +209,7 @@ export default function MapLibreNavMap({
           });
         } catch {}
       }
+      // 2. Electric Blue Core (or Emergency Crimson)
       if (!map.getLayer('route-line')) {
         try {
           map.addLayer({
@@ -281,9 +239,7 @@ export default function MapLibreNavMap({
     try {
       map.triggerRepaint();
     } catch {}
-
-    updateSvgOverlay();
-  }, [updateSvgOverlay]);
+  }, []);
 
   // Fit camera bounds to encompass the entire route, start, drop, and facilities
   const fitOverviewBounds = useCallback(() => {
@@ -335,7 +291,7 @@ export default function MapLibreNavMap({
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: OSM_STYLE,
+      style: createCartoStyle(),
       center: initialCoord,
       zoom: 11,
       pitch: 0,
@@ -344,25 +300,21 @@ export default function MapLibreNavMap({
     });
 
     map.on('load', () => {
+      try { map.resize(); } catch {}
       if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
         drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
         fitOverviewBounds();
       }
-      updateSvgOverlay();
+      setTimeout(() => {
+        try { map.resize(); } catch {}
+      }, 300);
     });
 
     map.on('styledata', () => {
       if (routeCoordsRef.current && routeCoordsRef.current.length > 1) {
         drawOrUpdateRoute(map, routeCoordsRef.current, isEmergencyRef.current);
       }
-      updateSvgOverlay();
     });
-
-    map.on('move', updateSvgOverlay);
-    map.on('zoom', updateSvgOverlay);
-    map.on('rotate', updateSvgOverlay);
-    map.on('pitch', updateSvgOverlay);
-    map.on('resize', updateSvgOverlay);
 
     // Create Navigation Puck (Vehicle marker)
     const puckEl = document.createElement('div');
@@ -436,12 +388,11 @@ export default function MapLibreNavMap({
     }
 
     drawOrUpdateRoute(map, routeCoordinates, isEmergency);
-    updateSvgOverlay();
 
     if (!isNavigating) {
       fitOverviewBounds();
     }
-  }, [routeCoordinates, isEmergency, isNavigating, drawOrUpdateRoute, fitOverviewBounds, updateSvgOverlay]);
+  }, [routeCoordinates, isEmergency, isNavigating, drawOrUpdateRoute, fitOverviewBounds]);
 
   // Update street pill text
   useEffect(() => {
@@ -462,12 +413,12 @@ export default function MapLibreNavMap({
     const startPt = originCoord || (routeCoordinates.length > 0 ? routeCoordinates[0] : null);
     if (!startPt) return;
 
-    const shortOrigin = originName.split(',')[0];
+    const shortOrigin = (originName || 'Origin Vault').split(',')[0];
 
     if (!startMarkerRef.current) {
       const el = document.createElement('div');
       el.innerHTML = `
-        <div style="background:#16a34a;color:#ffffff;padding:5px 11px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 16px rgba(22,163,74,0.6);border:2px solid #ffffff;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">
+        <div style="background:#16a34a;color:#ffffff;padding:5px 12px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 16px rgba(22,163,74,0.6);border:2px solid #ffffff;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;transform:translate(-50%,-100%);">
           <span style="font-size:13px;">🟢</span> <span>START: ${shortOrigin}</span>
         </div>
       `;
@@ -487,12 +438,12 @@ export default function MapLibreNavMap({
     const destPt = destinationCoord || (routeCoordinates.length > 0 ? routeCoordinates[routeCoordinates.length - 1] : null);
     if (!destPt) return;
 
-    const shortDest = destinationName.split(',')[0];
+    const shortDest = (destinationName || 'Destination Vault').split(',')[0];
 
     if (!destMarkerRef.current) {
       const el = document.createElement('div');
       el.innerHTML = `
-        <div style="background:#dc2626;color:#ffffff;padding:5px 11px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 16px rgba(220,38,38,0.6);border:2px solid #ffffff;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">
+        <div style="background:#dc2626;color:#ffffff;padding:5px 12px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 16px rgba(220,38,38,0.6);border:2px solid #ffffff;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;transform:translate(-50%,-100%);">
           <span style="font-size:13px;">📍</span> <span>DROP: ${shortDest}</span>
         </div>
       `;
@@ -521,10 +472,10 @@ export default function MapLibreNavMap({
       if (!f.latitude || !f.longitude) return;
 
       // Don't duplicate exact start or drop points if within ~150 meters
-      if (originCoord && Math.abs(f.latitude - originCoord[1]) < 0.002 && Math.abs(f.longitude - originCoord[0]) < 0.002) {
+      if (originCoord && Math.abs(f.latitude - originCoord[1]) < 0.003 && Math.abs(f.longitude - originCoord[0]) < 0.003) {
         return;
       }
-      if (destinationCoord && Math.abs(f.latitude - destinationCoord[1]) < 0.002 && Math.abs(f.longitude - destinationCoord[0]) < 0.002) {
+      if (destinationCoord && Math.abs(f.latitude - destinationCoord[1]) < 0.003 && Math.abs(f.longitude - destinationCoord[0]) < 0.003) {
         return;
       }
 
@@ -537,8 +488,8 @@ export default function MapLibreNavMap({
 
       const el = document.createElement('div');
       el.innerHTML = `
-        <div style="background:rgba(15,23,42,0.92);color:#c084fc;padding:3.5px 8px;border-radius:12px;font-size:10px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,0.5);border:1.5px solid #a855f7;display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;transition:transform 0.15s ease;">
-          <span style="font-size:11px;">❄️</span> <span>${shortName}</span>
+        <div style="background:rgba(15,23,42,0.92);color:#c084fc;padding:4px 9px;border-radius:12px;font-size:10px;font-weight:800;box-shadow:0 3px 12px rgba(0,0,0,0.5);border:1.5px solid #a855f7;display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;transform:translate(-50%,-100%);">
+          <span style="font-size:12px;">❄️</span> <span>${shortName}</span>
         </div>
       `;
 
@@ -562,12 +513,12 @@ export default function MapLibreNavMap({
     if (!map) return;
 
     if (facilityCoord && (isEmergency || isNavigating)) {
-      const shortFac = facilityName.split(',')[0];
+      const shortFac = (facilityName || 'Emergency Vault').split(',')[0];
       if (!emergMarkerRef.current) {
         const el = document.createElement('div');
         el.innerHTML = `
-          <div style="background:#7c3aed;color:#fff;padding:6px 12px;border-radius:14px;font-size:11px;font-weight:900;box-shadow:0 4px 20px rgba(124,58,237,0.7);border:2px solid #fff;display:flex;align-items:center;gap:5px;animation:cgPulse 1.2s infinite;white-space:nowrap;">
-            <span>❄️ EMERGENCY VAULT:</span> <span>${shortFac}</span>
+          <div style="background:#7c3aed;color:#fff;padding:7px 14px;border-radius:16px;font-size:12px;font-weight:900;box-shadow:0 4px 22px rgba(124,58,237,0.8);border:2.5px solid #fff;display:flex;align-items:center;gap:6px;animation:cgPulse 1.2s infinite;white-space:nowrap;transform:translate(-50%,-100%);">
+            <span style="font-size:14px;">❄️ EMERGENCY TARGET:</span> <span>${shortFac}</span>
           </div>
         `;
         emergMarkerRef.current = new maplibregl.Marker({ element: el })
@@ -585,8 +536,7 @@ export default function MapLibreNavMap({
   }, [facilityCoord, isEmergency, isNavigating, facilityName]);
 
   // -------------------------------------------------------------
-  // HIGH-PERFORMANCE FLUID DRIVING ENGINE
-  // Calibrated ~60 km/h cruising pace along highway
+  // HIGH-PERFORMANCE FLUID DRIVING ENGINE (3D Perspective ~60 km/h)
   // -------------------------------------------------------------
   useEffect(() => {
     if (!isNavigating) {
@@ -602,7 +552,7 @@ export default function MapLibreNavMap({
 
     map.easeTo({
       pitch: 56,
-      zoom: 16.5,
+      zoom: 16.2,
       duration: 600,
     });
 
@@ -619,11 +569,11 @@ export default function MapLibreNavMap({
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
 
-      // Realistic cruising speed ~58-62 km/h
+      // Realistic speed ~58-62 km/h
       const speed = 58 + Math.sin(now / 1400) * 3 + Math.random() * 1.5;
 
       const isEmerg = isEmergencyRef.current;
-      // Steady, realistic vehicular pace: 0.75 pts/sec
+      // Steady vehicular pace: 0.75 pts/sec
       const stepRate = isEmerg ? 1.05 : 0.75;
 
       let idx = routeIndexRef.current + dt * stepRate;
@@ -669,7 +619,7 @@ export default function MapLibreNavMap({
           arrowSvgRef.current.style.transform = `rotate(${bearing}deg)`;
         }
 
-        // Camera follow only when in drive mode
+        // Camera follow in 3D perspective mode
         if (cameraModeRef.current === 'drive') {
           map.jumpTo({
             center: [lng, lat],
@@ -742,7 +692,7 @@ export default function MapLibreNavMap({
     };
   }, [isNavigating, facilityName, destinationName]);
 
-  // Toggle Camera Mode between Driving 3D and Overview
+  // Toggle Camera Mode between 3D Driving and Overview
   const toggleCameraMode = () => {
     const map = mapRef.current;
     if (!map) return;
@@ -758,7 +708,7 @@ export default function MapLibreNavMap({
       map.easeTo({
         center: currentPt as [number, number],
         pitch: 56,
-        zoom: 16.5,
+        zoom: 16.2,
         duration: 700,
       });
     }
@@ -773,40 +723,12 @@ export default function MapLibreNavMap({
   };
 
   return (
-    <div className={`relative ${className} overflow-hidden bg-slate-900`}>
+    <div
+      className={`relative ${className || ''} overflow-hidden bg-slate-900 w-full h-full`}
+      style={{ width: '100%', height: '100%' }}
+    >
       {/* MapLibre 3D WebGL Canvas */}
-      <div ref={mapContainerRef} className="w-full h-full" />
-
-      {/* Synchronized SVG Polyline Overlay (100% Guaranteed Blue Line) */}
-      <svg
-        className="absolute inset-0 w-full h-full pointer-events-none"
-        style={{ zIndex: 2 }}
-      >
-        {svgPathD && (
-          <>
-            {/* Deep Navy Outer Casing for Depth */}
-            <path
-              d={svgPathD}
-              fill="none"
-              stroke="#174ea6"
-              strokeWidth={12}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={0.95}
-            />
-            {/* Vibrant Electric Blue Core */}
-            <path
-              d={svgPathD}
-              fill="none"
-              stroke={isEmergency ? '#dc2626' : '#1a73e8'}
-              strokeWidth={7.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={1}
-            />
-          </>
-        )}
-      </svg>
+      <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
 
       {/* Floating Google Maps Turn Banner */}
       <div className="absolute top-3 left-3 right-3 z-10 pointer-events-none flex justify-center">

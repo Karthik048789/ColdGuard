@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
-const DriverNavMap = dynamic(() => import('@/components/maps/DriverNavMap'), { ssr: false });
+const MapLibreNavMap = dynamic(() => import('@/components/maps/MapLibreNavMap'), { ssr: false });
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -624,7 +624,7 @@ export default function DriverPage() {
     <div style={s.navScreenWrap}>
       {/* 3D MapLibre Navigation Canvas (FullScreen Background) */}
       <div style={s.mapCanvasWrapper}>
-        <DriverNavMap
+        <MapLibreNavMap
           routeCoordinates={routeCoordinates}
           routeSteps={routeSteps}
           isNavigating={isMoving || isEmergency}
