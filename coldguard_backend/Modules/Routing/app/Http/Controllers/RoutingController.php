@@ -62,9 +62,12 @@ class RoutingController extends Controller
             ], 404);
         }
 
-        $facilityId = $request->query('facility_id') ? (int) $request->query('facility_id') : null;
+        $facilityId = $request->query('facility_id') && is_numeric($request->query('facility_id'))
+            ? (int) $request->query('facility_id')
+            : null;
+        $direct = $request->boolean('direct') || $request->query('facility_id') === 'none' || $request->query('facility_id') === '0';
 
-        $result = $this->routingService->calculateRoute($shipment, $facilityId);
+        $result = $this->routingService->calculateRoute($shipment, $facilityId, $direct);
 
         if (!$result['success']) {
             return response()->json([

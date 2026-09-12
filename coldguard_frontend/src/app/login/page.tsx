@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { apiFetch, setAuthSession } from '@/lib/api';
 
@@ -55,11 +56,14 @@ export default function LoginPage() {
         {/* Brand Header */}
         <div className="text-center mb-6">
           <Link href="/" className="inline-flex items-center gap-2 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </div>
+            <Image
+              src="/logo-transparent.png"
+              alt="ColdGuard Logo"
+              width={36}
+              height={36}
+              priority
+              className="object-contain"
+            />
             <span className="text-xl font-black tracking-tight text-slate-900">
               COLD<span className="text-blue-600">GUARD</span>
             </span>
