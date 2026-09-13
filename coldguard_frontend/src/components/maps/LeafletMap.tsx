@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 
 interface MapMarker {
@@ -40,6 +40,7 @@ export default function LeafletMap({
   const onMapClickRef = useRef(onMapClick);
   const lastRouteSigRef = useRef<string>('');
   const hasFitInitialBoundsRef = useRef(false);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     onMapClickRef.current = onMapClick;
@@ -121,6 +122,7 @@ export default function LeafletMap({
         });
         ro.observe(containerRef.current);
       }
+      setMapReady(true);
     });
 
     return () => {
@@ -133,6 +135,7 @@ export default function LeafletMap({
         mapRef.current.remove();
         mapRef.current = null;
       }
+      setMapReady(false);
     };
   }, []);
 
@@ -141,44 +144,55 @@ export default function LeafletMap({
     const map = mapRef.current;
     const L = LRef.current;
     const layerGroup = layerGroupRef.current;
-    if (!map || !L || !layerGroup) return;
+    if (!map || !L || !layerGroup || !mapReady) return;
 
     // A. Update or Draw Polyline
-    const routeSig = routeCoordinates && routeCoordinates.length > 0
+    const hasRoute = Array.isArray(routeCoordinates) && routeCoordinates.length > 1;
+    const routeSig = hasRoute
       ? `${routeCoordinates[0][0]}_${routeCoordinates[0][1]}_${routeCoordinates[routeCoordinates.length - 1][0]}_${routeCoordinates.length}`
       : '';
 
-    const routeChanged = routeSig !== lastRouteSigRef.current;
-    if (routeChanged) {
-      lastRouteSigRef.current = routeSig;
-      if (routeCoordinates && routeCoordinates.length > 0) {
-        if (polylineRef.current) {
-          polylineRef.current.setLatLngs(routeCoordinates);
-          polylineRef.current.setStyle({ color: routeColor });
-        } else {
-          const polyline = L.polyline(routeCoordinates, {
-            color: routeColor,
-            weight: 5,
-            opacity: 0.85,
-            lineJoin: 'round',
-          });
-          layerGroup.addLayer(polyline);
-          polylineRef.current = polyline;
-        }
+    if (hasRoute) {
+      if (!polylineRef.current) {
+        const polyline = L.polyline(routeCoordinates, {
+          color: routeColor || '#2563EB',
+          weight: 5,
+          opacity: 0.85,
+          lineJoin: 'round',
+        });
+        layerGroup.addLayer(polyline);
+        polylineRef.current = polyline;
+        lastRouteSigRef.current = routeSig;
 
-        // Smoothly fit bounds when a new route is loaded
         try {
-          const bounds = polylineRef.current.getBounds();
+          const bounds = polyline.getBounds();
           if (bounds.isValid()) {
-            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15, animate: true });
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15, animate: true });
           }
         } catch {}
-      } else if (polylineRef.current) {
-        layerGroup.removeLayer(polylineRef.current);
-        polylineRef.current = null;
+      } else {
+        if (routeSig !== lastRouteSigRef.current) {
+          lastRouteSigRef.current = routeSig;
+          polylineRef.current.setLatLngs(routeCoordinates);
+          try {
+            const bounds = polylineRef.current.getBounds();
+            if (bounds.isValid()) {
+              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15, animate: true });
+            }
+          } catch {}
+        }
+        polylineRef.current.setStyle({ color: routeColor || '#2563EB' });
+        if (!layerGroup.hasLayer(polylineRef.current)) {
+          layerGroup.addLayer(polylineRef.current);
+        }
       }
-    } else if (polylineRef.current && routeColor) {
-      polylineRef.current.setStyle({ color: routeColor });
+      try {
+        polylineRef.current.bringToBack();
+      } catch {}
+    } else if (polylineRef.current) {
+      layerGroup.removeLayer(polylineRef.current);
+      polylineRef.current = null;
+      lastRouteSigRef.current = '';
     }
 
     // B. Smooth Live Truck Marker (Zero flicker, position updated via setLatLng)
@@ -293,7 +307,7 @@ export default function LeafletMap({
         hasFitInitialBoundsRef.current = true;
       }
     }
-  }, [markers, routeCoordinates, routeColor]);
+  }, [markers, routeCoordinates, routeColor, mapReady]);
 
   return <div ref={containerRef} className={`${className} relative z-10`} style={{ width: '100%', height: '100%', minHeight: '100%' }} />;
 }

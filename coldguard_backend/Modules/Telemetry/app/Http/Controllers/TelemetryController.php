@@ -70,33 +70,62 @@ class TelemetryController extends Controller
 
         // Cache live tracking payload for sub-10ms response time on tracking polls
         \Illuminate\Support\Facades\Cache::put("shipment_live_{$shipment->id}", [
-            'shipment_id' => $shipment->id,
+            'shipment_id'    => $shipment->id,
             'tracking_number' => $shipment->tracking_number,
-            'product_name' => $shipment->product_name,
-            'location' => [
-                'latitude' => (float) $validated['latitude'],
+            'product_name'   => $shipment->product_name,
+            'location'       => [
+                'latitude'  => (float) $validated['latitude'],
                 'longitude' => (float) $validated['longitude'],
             ],
-            'latitude' => (float) $validated['latitude'],
-            'longitude' => (float) $validated['longitude'],
-            'temperature' => (float) $validated['temperature'],
-            'humidity' => (float) $validated['humidity'],
-            'battery' => (float) $validated['battery'],
-            'status' => $shipment->status,
-            'recorded_at' => $recTime->toIso8601String(),
+            'latitude'       => (float) $validated['latitude'],
+            'longitude'      => (float) $validated['longitude'],
+            'temperature'    => (float) $validated['temperature'],
+            'humidity'       => (float) $validated['humidity'],
+            'battery'        => (float) $validated['battery'],
+            'status'         => $shipment->status,
+            'recorded_at'    => $recTime->toIso8601String(),
         ], 120);
+
+        // ── Blockchain: append telemetry event ──────────────────────────────────
+        try {
+            $blockchain = app(\Modules\Blockchain\App\Services\BlockchainService::class);
+            $blockPayload = [
+                'telemetry_id' => $telemetry->id,
+                'temperature'  => (float) $validated['temperature'],
+                'humidity'     => (float) $validated['humidity'],
+                'battery'      => (float) $validated['battery'],
+                'latitude'     => (float) $validated['latitude'],
+                'longitude'    => (float) $validated['longitude'],
+                'recorded_at'  => $recTime->toIso8601String(),
+                'status'       => $shipment->status,
+            ];
+
+            if ($telemetry->is_anomaly) {
+                // Always log every temperature breach
+                $blockchain->appendBlock($shipment->id, 'TEMP_BREACH', array_merge($blockPayload, [
+                    'min_temp' => $shipment->min_temp,
+                    'max_temp' => $shipment->max_temp,
+                    'breach'   => $validated['temperature'] > $shipment->max_temp ? 'HIGH' : 'LOW',
+                ]));
+            } elseif ($telemetry->id % 10 === 0) {
+                // Log every 10th normal reading to keep the ledger lean
+                $blockchain->appendBlock($shipment->id, 'TELEMETRY_OK', $blockPayload);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Blockchain telemetry log failed: ' . $e->getMessage());
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Telemetry recorded successfully',
-            'data' => [
-                'id' => $telemetry->id,
+            'data'    => [
+                'id'          => $telemetry->id,
                 'shipment_id' => $telemetry->shipment_id,
                 'temperature' => (float) $telemetry->temperature,
-                'humidity' => (float) $telemetry->humidity,
-                'battery' => (float) $telemetry->battery,
-                'latitude' => (float) $telemetry->latitude,
-                'longitude' => (float) $telemetry->longitude,
+                'humidity'    => (float) $telemetry->humidity,
+                'battery'     => (float) $telemetry->battery,
+                'latitude'    => (float) $telemetry->latitude,
+                'longitude'   => (float) $telemetry->longitude,
                 'recorded_at' => $telemetry->recorded_at->toIso8601String(),
             ]
         ], 201);

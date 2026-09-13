@@ -167,8 +167,9 @@ class RoutingService
         $waypoints[] = ['latitude' => $startLat, 'longitude' => $startLng];
 
         if ($selectedFacility) {
-            // Emergency excursion diversion: destination is the cold storage facility
+            // Emergency excursion multi-stop diversion: Truck/Origin -> Nearby Storage Facility -> Actual Destination Hospital
             $waypoints[] = ['latitude' => (float) $selectedFacility->latitude, 'longitude' => (float) $selectedFacility->longitude];
+            $waypoints[] = ['latitude' => $destLat, 'longitude' => $destLng];
         } else {
             // Standard transit: route directly to destination hospital
             $waypoints[] = ['latitude' => $destLat, 'longitude' => $destLng];

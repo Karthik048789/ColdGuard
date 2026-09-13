@@ -36,6 +36,7 @@ export interface NavMapProps {
   facilities?: FacilityItem[];
   currentCoord?: [number, number] | null;
   onLocationUpdate?: (lng: number, lat: number, speed: number) => void;
+  onFacilityArrival?: () => void;
   onArrival?: () => void;
   className?: string;
 }
@@ -132,6 +133,7 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
   facilities = [],
   currentCoord,
   onLocationUpdate,
+  onFacilityArrival,
   onArrival,
   className = 'w-full h-full',
 }: NavMapProps) {
@@ -184,6 +186,9 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
   isEmergencyRef.current = isEmergency;
   const onArrivalRef = useRef<(() => void) | undefined>(onArrival);
   onArrivalRef.current = onArrival;
+  const onFacilityArrivalRef = useRef<(() => void) | undefined>(onFacilityArrival);
+  onFacilityArrivalRef.current = onFacilityArrival;
+  const hasStabilizedFacilityRef = useRef<boolean>(false);
   const onLocationUpdateRef = useRef<((lng: number, lat: number, speed: number) => void) | undefined>(onLocationUpdate);
   onLocationUpdateRef.current = onLocationUpdate;
 
@@ -467,10 +472,12 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
 
     if (isNewRoute) {
       prevRouteKeyRef.current = routeKey;
+      hasStabilizedFacilityRef.current = false;
 
-      // If currentCoord is supplied, snap directly to that coordinate along the route
+      // The new route begins at the truck's current position (routeCoordinates[0])
+      // Only snap if currentCoord is provided AND not emergency reroute
       let startIdx = 0;
-      if (currentCoord && currentCoord.length >= 2) {
+      if (currentCoord && currentCoord.length >= 2 && !isEmergency) {
         startIdx = findClosestPointIndex(routeCoordinates, currentCoord);
       }
       routeIndexRef.current = startIdx;
@@ -753,6 +760,18 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
         if (puckMarkerRef.current) {
           puckMarkerRef.current.setLngLat([lng, lat]);
           puckMarkerRef.current.setRotation(currentBearingRef.current);
+        }
+
+        // Detect passing near the emergency facility along the multi-stop route
+        if (facilityCoord && !hasStabilizedFacilityRef.current) {
+          const dLng = lng - facilityCoord[0];
+          const dLat = lat - facilityCoord[1];
+          if (Math.sqrt(dLng * dLng + dLat * dLat) < 0.0035) {
+            hasStabilizedFacilityRef.current = true;
+            if (onFacilityArrivalRef.current) {
+              onFacilityArrivalRef.current();
+            }
+          }
         }
 
         if (!isTransitioningRef.current && cameraModeRef.current === 'drive') {

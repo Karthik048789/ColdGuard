@@ -49,5 +49,8 @@ class DatabaseSeeder extends Seeder
         // Seed Healthcare Demo Shipments
         $this->call(\Modules\Shipment\Database\Seeders\ShipmentDatabaseSeeder::class);
         $this->call(FacilitySeeder::class);
+
+        // Seed predefined receivers (hospital staff who receive cold-chain shipments)
+        $this->call(\Modules\Shipment\Database\Seeders\ReceiverSeeder::class);
     }
 }

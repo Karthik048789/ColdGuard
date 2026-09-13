@@ -28,6 +28,8 @@ class Shipment extends Model
         'status', // CREATED, IN_TRANSIT, WARNING, CRITICAL, REROUTED, AT_COLD_STORAGE, DELIVERED, COMPROMISED
         'driver_name',
         'driver_phone',
+        'receiver_name',
+        'receiver_email',
         'current_lat',
         'current_lng',
         'current_temp',

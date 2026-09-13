@@ -75,6 +75,32 @@ class FacilityService
                 return false;
             }
 
+            // Constraint 5: Exclude origin facility (cannot divert to the origin facility we just departed from)
+            $originName = strtolower($shipment->origin_name ?? '');
+            $facName = strtolower($facility->name ?? '');
+            if (!empty($originName) && !empty($facName)) {
+                if ($facName === $originName ||
+                    (str_contains($facName, 'goa medical college') && str_contains($originName, 'goa medical college')) ||
+                    (str_contains($facName, 'gmc') && str_contains($originName, 'gmc'))
+                ) {
+                    return false;
+                }
+            }
+
+            $originLat = $shipment->origin_lat !== null ? (float) $shipment->origin_lat : null;
+            $originLng = $shipment->origin_lng !== null ? (float) $shipment->origin_lng : null;
+            if ($originLat !== null && $originLng !== null) {
+                $distFromOrigin = $this->calculateHaversineDistance(
+                    $originLat,
+                    $originLng,
+                    (float) $facility->latitude,
+                    (float) $facility->longitude
+                );
+                if ($distFromOrigin < 0.6) {
+                    return false;
+                }
+            }
+
             return true;
         });
 

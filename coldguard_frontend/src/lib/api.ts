@@ -49,3 +49,50 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 
   return data as T;
 }
+
+// ─── Blockchain API ────────────────────────────────────────────────────────────
+
+export async function fetchBlockchainLogs(shipmentId: number) {
+  return apiFetch<any>(`/blockchain/${shipmentId}/logs`);
+}
+
+export async function verifyBlockchainChain(shipmentId: number) {
+  return apiFetch<any>(`/blockchain/${shipmentId}/verify`);
+}
+
+export async function confirmDeliveryBlockchain(shipmentId: number, confirmedBy = 'manager') {
+  return apiFetch<any>(`/blockchain/${shipmentId}/confirm-delivery`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmed_by: confirmedBy }),
+  });
+}
+
+export async function fetchBlockchainReceipt(token: string) {
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://coldguard-backend.onrender.com/api';
+  const res = await fetch(`${API_BASE}/blockchain/receipt/${token}`, {
+    headers: { Accept: 'application/json' },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || 'Receipt not found');
+  return data;
+}
+
+// ─── Receiver API ──────────────────────────────────────────────────────────────
+
+export async function fetchReceivers() {
+  return apiFetch<{ success: boolean; data: any[] }>('/receivers');
+}
+
+export async function fetchShipmentsByReceiver(email: string) {
+  const res = await fetch(
+    `${API_BASE_URL}/shipments/by-receiver`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ email }),
+    }
+  );
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || 'Request failed');
+  return data;
+}

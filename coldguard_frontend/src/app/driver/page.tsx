@@ -81,7 +81,14 @@ function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return R * c;
 }
 
-function findNearestFacility(curLat: number, curLng: number, facList: any[]): any {
+function findNearestFacility(
+  curLat: number,
+  curLng: number,
+  facList: any[],
+  originName?: string,
+  originLat?: number,
+  originLng?: number
+): any {
   if (!facList || facList.length === 0) return null;
   let best: any = null;
   let minDist = Infinity;
@@ -89,6 +96,15 @@ function findNearestFacility(curLat: number, curLng: number, facList: any[]): an
     const fLat = Number(f.latitude);
     const fLng = Number(f.longitude);
     if (!fLat || !fLng) continue;
+
+    // Exclude origin facility so driver never turns back/teleports to the origin warehouse
+    if (originLat && originLng && Math.abs(fLat - Number(originLat)) < 0.005 && Math.abs(fLng - Number(originLng)) < 0.005) {
+      continue;
+    }
+    if (originName && f.name && f.name.toLowerCase().includes(originName.toLowerCase().split(' ')[0])) {
+      continue;
+    }
+
     const dist = calculateDistanceKm(curLat, curLng, fLat, fLng);
     if (dist < minDist) {
       minDist = dist;
@@ -207,11 +223,74 @@ export default function DriverPage() {
       const s = fallbackShip || shipmentDataRef.current;
       const curLat = telemetryRef.current?.latitude ?? telemetry?.latitude ?? s?.current_lat ?? s?.origin_lat ?? 15.4647;
       const curLng = telemetryRef.current?.longitude ?? telemetry?.longitude ?? s?.current_lng ?? s?.origin_lng ?? 73.8560;
+      const destLng = Number(s?.destination_lng);
+      const destLat = Number(s?.destination_lat);
 
+      // 1. If emergency facility reroute is requested, ALWAYS build the complete 3-point route:
+      // [Current Truck Position] -> [Emergency Cold Storage Facility] -> [Final Destination Hospital]
+      if (targetFacility || facilityId) {
+        let facLng: number | null = null;
+        let facLat: number | null = null;
+        let actualFac = targetFacility;
+        if (targetFacility?.longitude && targetFacility?.latitude) {
+          facLng = Number(targetFacility.longitude);
+          facLat = Number(targetFacility.latitude);
+        } else if (facilityId) {
+          actualFac = facilities.find((f: any) => f.id === facilityId);
+          if (actualFac?.longitude && actualFac?.latitude) {
+            facLng = Number(actualFac.longitude);
+            facLat = Number(actualFac.latitude);
+          }
+        }
+
+        const startLng = curLng;
+        const startLat = curLat;
+
+        if (startLng && startLat && facLng && facLat && destLng && destLat) {
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${facLng},${facLat};${destLng},${destLat}?overview=full&geometries=geojson&steps=true`;
+          const osrmRes = await fetch(osrmUrl).then((res) => res.json()).catch(() => null);
+
+          if (osrmRes?.routes?.[0]?.geometry?.coordinates) {
+            const coords = osrmRes.routes[0].geometry.coordinates;
+            setRouteCoordinates(coords);
+            const allSteps = osrmRes.routes[0].legs?.flatMap((l: any) => l.steps || []) || [];
+            if (allSteps.length > 0) {
+              const mappedSteps = allSteps.map((st: any) => ({
+                instruction: st.maneuver?.instruction || st.name || 'Proceed along route',
+                distance_m: st.distance,
+                duration_seconds: st.duration,
+              }));
+              setRouteSteps(mappedSteps);
+              setNextStep(mappedSteps[0]);
+              if (mappedSteps[0]?.instruction) setCurrentStreet(mappedSteps[0].instruction);
+            }
+
+            // Broadcast rerouted multi-stop road route to manager & receiver dashboards
+            if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+              try {
+                const bc = new BroadcastChannel('coldguard_live_tracking');
+                bc.postMessage({
+                  shipmentId: Number(sid),
+                  latitude: curLat,
+                  longitude: curLng,
+                  temperature: telemetryRef.current?.temperature ?? 4.2,
+                  speed: 55,
+                  status: 'REROUTED',
+                  rerouted: true,
+                  facility: actualFac,
+                  routeCoordinates: coords,
+                });
+                bc.close();
+              } catch {}
+            }
+            return coords;
+          }
+        }
+      }
+
+      // 2. Standard direct transit route
       let url = `${API}/shipments/${sid}/route?lat=${curLat}&lng=${curLng}`;
-      if (facilityId) {
-        url += `&facility_id=${facilityId}`;
-      } else if (direct) {
+      if (direct) {
         url += `&direct=true`;
       }
       const r = await fetch(url, { headers: { Authorization: `Bearer ${tk}` } });
@@ -227,28 +306,23 @@ export default function DriverPage() {
             setCurrentStreet(d.data.steps[0].instruction);
           }
         }
-        return;
+        return d.data.geometry.coordinates;
       }
 
-      // Direct OSRM engine fallback if backend route had no geometry or failed
+      // 3. Direct OSRM engine fallback: builds standard 2-point route
       const startLng = curLng;
       const startLat = curLat;
-      const endLng = targetFacility
-        ? Number(targetFacility.longitude)
-        : Number(s?.destination_lng);
-      const endLat = targetFacility
-        ? Number(targetFacility.latitude)
-        : Number(s?.destination_lat);
 
-      if (startLng && startLat && endLng && endLat) {
-        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
+      if (startLng && startLat && destLng && destLat) {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson&steps=true`;
         const osrmRes = await fetch(osrmUrl).then((res) => res.json()).catch(() => null);
 
         if (osrmRes?.routes?.[0]?.geometry?.coordinates) {
-          setRouteCoordinates(osrmRes.routes[0].geometry.coordinates);
-          const steps = osrmRes.routes[0].legs?.[0]?.steps || [];
-          if (steps.length > 0) {
-            const mappedSteps = steps.map((st: any) => ({
+          const coords = osrmRes.routes[0].geometry.coordinates;
+          setRouteCoordinates(coords);
+          const allSteps = osrmRes.routes[0].legs?.flatMap((l: any) => l.steps || []) || [];
+          if (allSteps.length > 0) {
+            const mappedSteps = allSteps.map((st: any) => ({
               instruction: st.maneuver?.instruction || st.name || 'Proceed along route',
               distance_m: st.distance,
               duration_seconds: st.duration,
@@ -257,12 +331,14 @@ export default function DriverPage() {
             setNextStep(mappedSteps[0]);
             if (mappedSteps[0]?.instruction) setCurrentStreet(mappedSteps[0].instruction);
           }
+          return coords;
         }
       }
     } catch (e) {
-      console.error('Failed to fetch OSRM route:', e);
+      console.error('Failed to load route:', e);
     }
-  }, []);
+    return null;
+  }, [facilities]);
 
   // Fetch active shipment assigned to this driver
   useEffect(() => {
@@ -345,27 +421,43 @@ export default function DriverPage() {
     const sid = shipmentIdRef.current;
     if (!tk || !sid) return;
 
-    const curT = telemetryRef.current?.temperature ?? 4.2;
+    // Calculate dynamic live temperature according to current mode
+    let curT = telemetryRef.current?.temperature ?? 4.2;
+    if (driverStatusRef.current === 'emergency' && curT < 8.5) {
+      curT = 9.4;
+    }
     const newTemp = parseFloat((curT + (Math.random() * 0.04 - 0.02)).toFixed(2));
 
-    // 1. Keep ref updated silently without forcing React to re-render DriverPage
+    // 1. Keep ref and React states synchronized so top pill & dashboard are live
     if (telemetryRef.current) {
       telemetryRef.current.latitude = lat;
       telemetryRef.current.longitude = lng;
       telemetryRef.current.temperature = newTemp;
     }
 
-    // 2. Immediate zero-latency cross-tab broadcast for manager dashboard real-time tracking
+    setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : {
+      latitude: lat,
+      longitude: lng,
+      temperature: newTemp,
+      humidity: 64,
+      battery: 90,
+      recorded_at: new Date().toISOString(),
+    }));
+
+    setShipment((p: any) => (p ? { ...p, current_lat: lat, current_lng: lng, current_temp: newTemp } : p));
+
+    // 2. Immediate zero-latency cross-tab broadcast for manager and receiver dashboards
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         const bc = new BroadcastChannel('coldguard_live_tracking');
         bc.postMessage({
-          shipmentId: sid,
+          shipmentId: Number(sid),
           latitude: lat,
           longitude: lng,
           temperature: newTemp,
           speed,
-          status: driverStatusRef.current === 'emergency' ? 'CRITICAL' : 'IN_TRANSIT',
+          status: driverStatusRef.current === 'emergency' ? 'CRITICAL' : emergencyFacilityRef.current ? 'REROUTED' : 'IN_TRANSIT',
+          facility: emergencyFacilityRef.current,
         });
         bc.close();
       } catch {}
@@ -387,10 +479,6 @@ export default function DriverPage() {
           recorded_at: new Date().toISOString(),
         }),
       });
-
-      if (Math.abs(newTemp - (telemetry?.temperature ?? 4.2)) >= 0.25) {
-        setTelemetry((p) => (p ? { ...p, latitude: lat, longitude: lng, temperature: newTemp } : p));
-      }
     } catch {} finally {
       isSyncingRef.current = false;
     }
@@ -401,45 +489,68 @@ export default function DriverPage() {
   const driverStatusRef = useRef<string>(driverStatus);
   driverStatusRef.current = driverStatus;
 
-  // Handle arrival at either emergency facility or final destination
-  const handleArrival = useCallback(async () => {
-    if (driverStatusRef.current === 'emergency') {
-      // 1. ARRIVED AT NEARBY EMERGENCY FACILITY -> STOP HERE!
-      setDriverStatus('at_facility');
-      setIsAtFacility(true);
-      const fac = emergencyFacilityRef.current;
-      const facName = fac?.name?.split(',')[0] || 'Emergency Cold Storage';
-      setActionMsg(`❄️ Arrived at ${facName}! Cargo secured & stabilized at 3.5°C.`);
-      // Normalize cargo temperature inside cold storage
-      setTelemetry((prev) => (prev ? { ...prev, temperature: 3.5 } : prev));
+  // Intermediate stop: Reached emergency cold storage facility along the multi-stop route
+  const handleFacilityArrival = useCallback(async () => {
+    const fac = emergencyFacilityRef.current;
+    const facName = fac?.name?.split(',')[0] || 'Nearby Cold Storage';
+    const destName = shipmentDataRef.current?.destination_name?.split(',')[0] || 'destination hospital';
+    setActionMsg(`❄️ Reached ${facName}! Cold chain secured & replenished at 3.5C. Continuing journey to ${destName}...`);
+    setIsAtFacility(true);
+    setDriverStatus('idle'); // Pause at the facility. Wait for driver to manually resume!
+    setActionMsg(`🚚 Reached ${facName}! Cold chain secured at 3.5°C. Vehicle paused. Tap play to resume journey to ${destName}.`);
 
-      // Report safe arrival at facility to backend
-      const tk = tokenRef.current;
-      const sid = shipmentIdRef.current;
-      if (tk && sid && fac) {
-        try {
-          await fetch(`${API}/shipments/${sid}/telemetry`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              temperature: 3.5,
-              humidity: 60.0,
-              battery: 90.0,
-              latitude: fac.latitude,
-              longitude: fac.longitude,
-              recorded_at: new Date().toISOString(),
-            }),
-          });
-        } catch {}
-      }
-    } else {
-      // 2. ARRIVED AT FINAL DESTINATION HOSPITAL
-      setDriverStatus('delivered');
-      setActionMsg('✓ Arrived at destination hospital vault! Ready for delivery confirmation.');
+    // Normalize cargo temperature to safe level (3.5C)
+    setTelemetry((prev) => (prev ? { ...prev, temperature: 3.5 } : prev));
+    setShipment((prev: any) => (prev ? { ...prev, current_temp: 3.5, status: 'REROUTED' } : prev));
+    if (telemetryRef.current) {
+      telemetryRef.current.temperature = 3.5;
+    }
+
+    // Report safe stabilized reading to backend database
+    const tk = tokenRef.current;
+    const sid = shipmentIdRef.current;
+    if (tk && sid && fac) {
+      try {
+        await fetch(`${API}/shipments/${sid}/telemetry`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            temperature: 3.5,
+            humidity: 62.0,
+            battery: 89.0,
+            latitude: fac.latitude,
+            longitude: fac.longitude,
+            recorded_at: new Date().toISOString(),
+          }),
+        });
+      } catch {}
+    }
+
+    // Broadcast stabilized temperature to manager and receiver dashboards
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const bc = new BroadcastChannel('coldguard_live_tracking');
+        bc.postMessage({
+          shipmentId: Number(sid),
+          latitude: fac?.latitude,
+          longitude: fac?.longitude,
+          temperature: 3.5,
+          speed: 50,
+          status: 'REROUTED',
+          rerouted: true,
+          facility: fac,
+        });
+        bc.close();
+      } catch {}
     }
   }, []);
 
-  // Controls
+  // Final destination arrival
+  const handleArrival = useCallback(async () => {
+    setDriverStatus('delivered');
+    setActionMsg('✓ Arrived at destination hospital! Cold chain preserved. Ready for delivery confirmation.');
+  }, []);
+
   const handleStart = async () => {
     if (!token || !shipmentId || driverStatus === 'moving' || driverStatus === 'emergency') return;
     setLoading(true);
@@ -514,7 +625,7 @@ export default function DriverPage() {
     setTimeout(() => setTempPulse(false), 800);
 
     try {
-      // 1. Spikes temperature into critical cold-chain excursion (>8.5°C)
+      // 1. Spikes temperature into critical cold-chain excursion (>8.5C)
       const curTemp = telemetryRef.current?.temperature ?? telemetry?.temperature ?? shipment?.current_temp ?? 5.5;
       const newSpikeTemp = curTemp < 8.0
         ? parseFloat((9.2 + Math.random() * 0.8).toFixed(2))
@@ -550,20 +661,49 @@ export default function DriverPage() {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => null);
 
-      // Immediately update local UI telemetry state so temperature visibly increases!
+      // Immediately update local UI telemetry & shipment states so temperature visibly increases!
+      telemetryRef.current = {
+        ...(telemetryRef.current || {}),
+        temperature: newSpikeTemp,
+        latitude: curLat,
+        longitude: curLng,
+        humidity: 68,
+        battery: 88,
+        recorded_at: new Date().toISOString(),
+      } as any;
+
       setTelemetry((prev) => ({
         ...(prev || { humidity: 68, battery: 88, recorded_at: new Date().toISOString() }),
         temperature: newSpikeTemp,
         latitude: curLat,
         longitude: curLng,
       }));
-      if (telemetryRef.current) {
-        telemetryRef.current.temperature = newSpikeTemp;
-        telemetryRef.current.latitude = curLat;
-        telemetryRef.current.longitude = curLng;
+
+      setShipment((prev: any) => (prev ? {
+        ...prev,
+        current_temp: newSpikeTemp,
+        current_lat: curLat,
+        current_lng: curLng,
+        status: 'REROUTED',
+      } : prev));
+
+      // Immediately broadcast excursion temperature to manager and receiver dashboards (0ms cross-tab latency!)
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        try {
+          const bc = new BroadcastChannel('coldguard_live_tracking');
+          bc.postMessage({
+            shipmentId: Number(shipmentId),
+            latitude: curLat,
+            longitude: curLng,
+            temperature: newSpikeTemp,
+            speed: 55,
+            status: 'CRITICAL',
+          });
+          bc.close();
+        } catch {}
       }
 
-      // 2. Fetch nearest eligible cold-storage facility (/api/shipments/{id}/facilities/eligible)
+      // 2. Fetch nearest eligible cold-storage facility (excluding origin!)
       let nearest: any = null;
       try {
         const facRes = await fetch(`${API}/shipments/${shipmentId}/facilities/eligible?lat=${curLat}&lng=${curLng}`, {
@@ -573,21 +713,52 @@ export default function DriverPage() {
         nearest = facData.data?.recommended_facility || facData.data?.facilities?.[0];
       } catch {}
 
-      // Robust fallback: Geodesic Haversine search across Goa facilities list
+      // Robust fallback: Haversine search across Goa facilities list, strictly excluding origin warehouse
       if (!nearest) {
-        nearest = findNearestFacility(curLat, curLng, facilities);
+        nearest = findNearestFacility(curLat, curLng, facilities, shipment?.origin_name, shipment?.origin_lat, shipment?.origin_lng);
       }
 
       if (nearest) {
         setEmergencyFacility(nearest);
         setIsAtFacility(false);
         const facShortName = nearest.name.split(',')[0];
-        setActionMsg(`⚠️ Temp breach: ${newSpikeTemp}°C! Rerouting to ${facShortName}...`);
+        const destShort = (shipment?.destination_name || 'destination').split(',')[0];
+        setActionMsg(`🚨 Temp breach: ${newSpikeTemp}°C! Rerouting via ${facShortName} to ${destShort}...`);
 
-        // 3. Recalculate road route from current position to this nearby facility
-        await fetchRouteData(token, shipmentId, nearest.id, false, undefined, nearest);
+        // Post REROUTED status to backend and append to blockchain ledger
+        fetch(`${API}/shipments/${shipmentId}/reroute`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            facility_id: nearest.id,
+            facility_name: nearest.name,
+            temperature: newSpikeTemp,
+          }),
+        }).catch(() => null);
 
-        // 4. Start navigating towards facility!
+        // 3. Recalculate multi-stop road route: [Current Position -> Facility -> Destination]
+        const newCoords = await fetchRouteData(token, shipmentId, nearest.id, false, undefined, nearest);
+
+        // Broadcast to manager and receiver dashboards immediately
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('coldguard_live_tracking');
+            bc.postMessage({
+              shipmentId: Number(shipmentId),
+              latitude: curLat,
+              longitude: curLng,
+              temperature: newSpikeTemp,
+              speed: 55,
+              status: 'REROUTED',
+              rerouted: true,
+              facility: nearest,
+              routeCoordinates: newCoords || routeCoordinates,
+            });
+            bc.close();
+          } catch {}
+        }
+
+        // 4. Continue navigating along rerouted path towards facility then destination!
         setDriverStatus('emergency');
       } else {
         setEmergencyFacility(null);
@@ -851,6 +1022,7 @@ export default function DriverPage() {
           facilityCoord={stableFacilityCoord}
           facilityName={emergencyFacility?.name}
           onLocationUpdate={handleLocationUpdate}
+          onFacilityArrival={handleFacilityArrival}
           onArrival={handleArrival}
         />
       </div>
@@ -868,7 +1040,7 @@ export default function DriverPage() {
         <div style={{ ...s.tempPill, borderColor: tempColor, boxShadow: `0 4px 14px ${tempColor}40` }}>
           <span style={{ fontSize: 12 }}>🌡</span>
           <span style={{ ...s.tempValText, color: tempColor, animation: tempPulse ? 'cgPulse 0.5s ease' : 'none' }}>
-            {temp !== undefined && temp !== null ? `${Number(temp).toFixed(1)}°C` : '--.-°C'}
+            {temp !== undefined && temp !== null ? `${Number(temp).toFixed(1)}°C` : '--.-C'}
           </span>
           <span style={s.tempStatusBadge(statusColor)}>
             {displayStatus}
