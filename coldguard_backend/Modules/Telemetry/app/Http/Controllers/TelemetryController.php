@@ -290,7 +290,9 @@ class TelemetryController extends Controller
 
             // Automatically escalate shipment status on excursion
             if ($temp > $shipment->max_temp) {
-                $shipment->status = ($temp > ($shipment->max_temp + 3)) ? 'CRITICAL' : 'WARNING';
+                if (!in_array($shipment->status, ['REROUTED', 'DIVERTED', 'AT_COLD_STORAGE', 'DELIVERED'])) {
+                    $shipment->status = ($temp > ($shipment->max_temp + 3)) ? 'CRITICAL' : 'WARNING';
+                }
                 $shipment->current_temp = $temp;
                 $shipment->save();
             }

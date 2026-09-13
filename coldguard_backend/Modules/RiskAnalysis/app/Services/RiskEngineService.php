@@ -66,7 +66,9 @@ class RiskEngineService
             $reason = ($isCritical ? "CRITICAL" : "HIGH") . " TEMPERATURE BREACH: Current temperature ({$currentTemp}°C) has {$breachType}.";
             $recommendation = "IMMEDIATE INTERVENTION REQUIRED: Cold-chain integrity is compromised. Reroute to nearest cold-storage facility immediately.";
 
-            $shipment->update(['status' => $severity]);
+            if (!in_array($shipment->status, ['REROUTED', 'DIVERTED', 'AT_COLD_STORAGE', 'DELIVERED'])) {
+                $shipment->update(['status' => $severity]);
+            }
         }
         // SCENARIO B: Rising Temperature approaching Max Limit (HIGH Risk)
         elseif ($slopePerMin > 0 && ($maxTemp - $currentTemp) <= 1.8) {
@@ -81,7 +83,9 @@ class RiskEngineService
             $reason = "HIGH RISK: Temperature is continuously increasing at +{$slopePerMin}°C/min. At this rate, max threshold ({$maxTemp}°C) will be breached in ~{$minutesToFailure} minutes.";
             $recommendation = "Cold-chain failure predicted in ~{$minutesToFailure} minutes. Prepare nearby cold-storage facility intervention reroute.";
 
-            $shipment->update(['status' => 'WARNING']);
+            if (!in_array($shipment->status, ['REROUTED', 'DIVERTED', 'AT_COLD_STORAGE', 'DELIVERED'])) {
+                $shipment->update(['status' => 'WARNING']);
+            }
         }
         // SCENARIO C: Elevated Trend or Low Battery (MEDIUM Risk)
         elseif ($slopePerMin > 0.15 || $battery < 25.0) {

@@ -294,15 +294,34 @@ export default function ManagerDashboard() {
       let durationMin: number | undefined;
       let routeVia: string = 'OSRM Engine';
 
-      const isRerouted = shipment.status === 'REROUTED' || (shipment.status as string) === 'DIVERTED' || shipment.status === 'CRITICAL';
+      const isExcursion = (shipment.status === 'WARNING' || shipment.status === 'CRITICAL') &&
+        (Number(shipment.current_temp) > Number(shipment.max_temp ?? 8) || Number(shipment.current_temp) < Number(shipment.min_temp ?? 2));
+      const isRerouted = shipment.status === 'REROUTED' || (shipment.status as string) === 'DIVERTED' || shipment.status === 'CRITICAL' || isExcursion;
 
       // 1. If REROUTED, ALWAYS build multi-stop route [Start -> Emergency Hub -> Final Destination]
       if (isRerouted) {
-        const facCandidate = (shipment as any).facility || facilities.find((f: any) => {
-          const fLat = Number(f.latitude);
-          const fLng = Number(f.longitude);
-          return Math.abs(fLat - startLat) > 0.015 || Math.abs(fLng - startLng) > 0.015;
-        }) || { latitude: 15.4989, longitude: 73.8278, name: 'Panaji Vaccine Hub' };
+        const truckLat = Number(shipment.current_lat || shipment.origin_lat);
+        const truckLng = Number(shipment.current_lng || shipment.origin_lng);
+
+        let facCandidate = (shipment as any).facility;
+        if (!facCandidate && facilities.length > 0) {
+          let minD = Infinity;
+          for (const f of facilities) {
+            const fLat = Number(f.latitude);
+            const fLng = Number(f.longitude);
+            if (!fLat || !fLng) continue;
+            // Exclude origin warehouse
+            if (Math.abs(fLat - startLat) < 0.005 && Math.abs(fLng - startLng) < 0.005) continue;
+            const d = Math.hypot(fLat - truckLat, fLng - truckLng);
+            if (d < minD) {
+              minD = d;
+              facCandidate = f;
+            }
+          }
+        }
+        if (!facCandidate) {
+          facCandidate = { latitude: 15.4989, longitude: 73.8278, name: 'Panaji Central Vaccine Store' };
+        }
 
         if (facCandidate?.latitude && facCandidate?.longitude) {
           const multiUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${Number(facCandidate.longitude)},${Number(facCandidate.latitude)};${endLng},${endLat}?overview=full&geometries=geojson`;
@@ -722,7 +741,12 @@ export default function ManagerDashboard() {
     if (selectedShipment) {
       fetchOsrmRoute(selectedShipment);
     }
-  }, [selectedShipment?.id, selectedShipment?.status, fetchOsrmRoute]);
+  }, [
+    selectedShipment?.id,
+    selectedShipment?.status,
+    selectedShipment?.current_temp != null && Number(selectedShipment?.current_temp) > Number(selectedShipment?.max_temp ?? 8),
+    fetchOsrmRoute,
+  ]);
 
   // Real-time live polling for selected shipment telemetry & moving truck position (every 2-3 sec)
   useEffect(() => {

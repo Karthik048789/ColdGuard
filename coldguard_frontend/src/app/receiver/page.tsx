@@ -516,7 +516,9 @@ function ReceiverDashboardContent() {
       let distanceKm: string | undefined;
       let durationMin: number | undefined;
 
-      const isRerouted = s.status === 'REROUTED' || (s.status as string) === 'DIVERTED' || s.status === 'CRITICAL';
+      const isExcursion = (s.status === 'WARNING' || s.status === 'CRITICAL') &&
+        (Number(s.current_temp) > Number(s.max_temp ?? 8) || Number(s.current_temp) < Number(s.min_temp ?? 2));
+      const isRerouted = s.status === 'REROUTED' || (s.status as string) === 'DIVERTED' || s.status === 'CRITICAL' || isExcursion;
 
       // 1. If REROUTED, build multi-stop route [Start -> Facility -> Destination]
       if (isRerouted) {
