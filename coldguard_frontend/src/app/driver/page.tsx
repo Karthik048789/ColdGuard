@@ -494,10 +494,9 @@ export default function DriverPage() {
     const fac = emergencyFacilityRef.current;
     const facName = fac?.name?.split(',')[0] || 'Nearby Cold Storage';
     const destName = shipmentDataRef.current?.destination_name?.split(',')[0] || 'destination hospital';
-    setActionMsg(`❄️ Reached ${facName}! Cold chain secured & replenished at 3.5C. Continuing journey to ${destName}...`);
     setIsAtFacility(true);
-    setDriverStatus('idle'); // Pause at the facility. Wait for driver to manually resume!
-    setActionMsg(`🚚 Reached ${facName}! Cold chain secured at 3.5°C. Vehicle paused. Tap play to resume journey to ${destName}.`);
+    setDriverStatus('at_facility'); // Pause at the facility. Wait for driver to manually resume!
+    setActionMsg(`🚚 Reached ${facName}! Cold chain secured at 3.5°C. Vehicle paused. Tap ▶ (Play) to continue journey to ${destName}.`);
 
     // Normalize cargo temperature to safe level (3.5C)
     setTelemetry((prev) => (prev ? { ...prev, temperature: 3.5 } : prev));
@@ -552,31 +551,81 @@ export default function DriverPage() {
   }, []);
 
   const handleStart = async () => {
-    if (!token || !shipmentId || driverStatus === 'moving' || driverStatus === 'emergency') return;
+    if (!token || !shipmentId || isMoving || driverStatus === 'emergency') return;
     setLoading(true);
     try {
-      if (isAtFacility) {
-        // Resuming journey from facility to final destination!
+      if (isAtFacility || emergencyFacility || driverStatus === 'at_facility') {
+        // Resuming journey from facility to final destination hospital!
         setIsAtFacility(false);
         setEmergencyFacility(null);
 
         // Put shipment back to IN_TRANSIT on backend
-        await fetch(`${API}/shipments/${shipmentId}/start`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        try {
+          await fetch(`${API}/shipments/${shipmentId}/start`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {}
 
         // Fetch direct route from facility location to final destination hospital
-        await fetchRouteData(token, shipmentId, undefined, true);
-        const destName = shipment?.destination_name?.split(',')[0] || 'destination';
-        setActionMsg(`Resuming transit towards ${destName}...`);
+        const curLng = telemetryRef.current?.longitude ?? shipment?.current_lng ?? 73.8560;
+        const curLat = telemetryRef.current?.latitude ?? shipment?.current_lat ?? 15.4647;
+        const destLng = Number(shipment?.destination_lng);
+        const destLat = Number(shipment?.destination_lat);
+
+        let newCoords: [number, number][] | undefined = undefined;
+        if (curLng && curLat && destLng && destLat) {
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${curLng},${curLat};${destLng},${destLat}?overview=full&geometries=geojson&steps=true`;
+          const osrmRes = await fetch(osrmUrl).then((res) => res.json()).catch(() => null);
+          if (osrmRes?.routes?.[0]?.geometry?.coordinates) {
+            newCoords = osrmRes.routes[0].geometry.coordinates;
+            if (newCoords) setRouteCoordinates(newCoords);
+            const allSteps = osrmRes.routes[0].legs?.flatMap((l: any) => l.steps || []) || [];
+            if (allSteps.length > 0) {
+              const mappedSteps = allSteps.map((st: any) => ({
+                instruction: st.maneuver?.instruction || st.name || 'Proceed along route',
+                distance_m: st.distance,
+                duration_seconds: st.duration,
+              }));
+              setRouteSteps(mappedSteps);
+              setNextStep(mappedSteps[0]);
+              if (mappedSteps[0]?.instruction) setCurrentStreet(mappedSteps[0].instruction);
+            }
+          }
+        }
+
+        if (!newCoords) {
+          await fetchRouteData(token, shipmentId, undefined, true);
+        }
+
+        const destName = shipment?.destination_name?.split(',')[0] || 'destination hospital';
+        setActionMsg(`🚚 Resuming transit from facility towards ${destName} (Cold chain safe at 3.5°C)...`);
         setDriverStatus('moving');
+
+        // Broadcast to manager and receiver dashboards
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('coldguard_live_tracking');
+            bc.postMessage({
+              shipmentId: Number(shipmentId),
+              latitude: curLat,
+              longitude: curLng,
+              temperature: 3.5,
+              speed: 55,
+              status: 'IN_TRANSIT',
+              rerouted: false,
+              facility: null,
+              routeCoordinates: newCoords || routeCoordinates,
+            });
+            bc.close();
+          } catch {}
+        }
       } else {
         if (routeCoordinates.length < 2) {
           await fetchRouteData(token, shipmentId);
         }
         setActionMsg('Cruising at ~60 km/h along highway...');
-        setDriverStatus(emergencyFacility ? 'emergency' : 'moving');
+        setDriverStatus('moving');
       }
 
       if (shipment?.status === 'CREATED') {
@@ -1100,17 +1149,19 @@ export default function DriverPage() {
               ...s.circleFab,
               background: isMoving || driverStatus === 'emergency'
                 ? 'linear-gradient(135deg, #f59e0b, #d97706)'
-                : isAtFacility
+                : isAtFacility || driverStatus === 'at_facility'
                 ? 'linear-gradient(135deg, #10b981, #059669)'
                 : 'linear-gradient(135deg, #22c55e, #16a34a)',
               boxShadow: isMoving
                 ? '0 4px 18px rgba(245,158,11,0.5)'
+                : isAtFacility || driverStatus === 'at_facility'
+                ? '0 4px 18px rgba(16,185,129,0.6)'
                 : '0 4px 18px rgba(34,197,94,0.5)',
               opacity: driverStatus === 'delivered' ? 0.45 : 1,
             }}
             onClick={isMoving || driverStatus === 'emergency' ? handleStop : handleStart}
             disabled={driverStatus === 'delivered' || loading}
-            title={isMoving ? 'Pause Simulation' : isAtFacility ? 'Resume Simulation' : 'Start Simulation'}
+            title={isMoving ? 'Pause Simulation' : isAtFacility || driverStatus === 'at_facility' ? 'Resume Journey to Destination Hospital' : 'Start Simulation'}
           >
             {loading ? (
               <div style={s.miniSpinner} />

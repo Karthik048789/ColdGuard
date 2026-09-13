@@ -728,8 +728,15 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
         if (onLocationUpdateRef.current && Array.isArray(lastPt)) {
           onLocationUpdateRef.current(lastPt[0], lastPt[1], 0);
         }
-        if (onArrivalRef.current) {
-          onArrivalRef.current();
+        if (isEmergencyRef.current || (facilityCoord && !hasStabilizedFacilityRef.current)) {
+          hasStabilizedFacilityRef.current = true;
+          if (onFacilityArrivalRef.current) {
+            onFacilityArrivalRef.current();
+          }
+        } else {
+          if (onArrivalRef.current) {
+            onArrivalRef.current();
+          }
         }
         return;
       }
@@ -962,8 +969,12 @@ const MapLibreNavMap = React.memo(function MapLibreNavMap({
           </div>
           <span className="text-blue-400 font-bold">→</span>
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
-            <span className="font-bold text-white truncate">{shortTo}</span>
+            <span className={`w-2 h-2 rounded-full ${isEmergency ? 'bg-amber-400 animate-pulse' : 'bg-rose-400'} shrink-0`} />
+            <span className="font-bold text-white truncate">
+              {isEmergency
+                ? `❄️ ${facilityName?.split(',')[0] || 'Emergency Vault'}`
+                : shortTo}
+            </span>
           </div>
           <span ref={pathKmRef} className="text-emerald-400 font-mono font-bold bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 shrink-0">
             {remainingKm} km
