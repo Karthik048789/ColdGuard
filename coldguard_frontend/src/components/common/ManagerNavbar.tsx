@@ -20,6 +20,7 @@ export default function ManagerNavbar() {
     { name: 'Dashboard Overview', path: '/manager' },
     { name: 'Shipments', path: '/manager/shipments' },
     { name: 'Facilities Directory', path: '/manager/facilities' },
+    { name: 'Receiver Intake', path: '/receiver' },
   ];
 
   return (
